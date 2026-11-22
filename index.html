@@ -121,24 +121,33 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b9"></script>
-<script src="read.js?v=b9"></script>
-<script src="engine.js?v=b9"></script>
-<script src="state.js?v=b9"></script>
-<script src="live.js?v=b9"></script>
-<script src="swap.js?v=b9"></script>
+<script src="models.js?v=b10"></script>
+<script src="read.js?v=b10"></script>
+<script src="engine.js?v=b10"></script>
+<script src="state.js?v=b10"></script>
+<script src="live.js?v=b10"></script>
+<script src="swap.js?v=b10"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b9";
+const VERSION = "b10";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
 const ts = () => ((performance.now() - t0) / 1000).toFixed(1);
+// the log is kept through a reload of the page (3 hours), so it can still be copied afterwards
+const LOGSTORE = "big2-log";
+try {
+  const d = JSON.parse(localStorage.getItem(LOGSTORE) || "null");
+  if (d && d.lines && Date.now() - d.t < 3 * 3600 * 1000) lines.push(...d.lines, "—— 以上是重新整理網頁之前的紀錄 ——");
+} catch (e) {}
+let logSaveT = null;
 function log(msg) {
   lines.push(`${ts()}s  ${msg}`);
   if (lines.length > 600) lines.splice(0, lines.length - 600);
   $("log").textContent = lines.slice(-150).join("\n");
+  clearTimeout(logSaveT);
+  logSaveT = setTimeout(() => { try { localStorage.setItem(LOGSTORE, JSON.stringify({ t: Date.now(), lines: lines.slice(-500) })); } catch (e) {} }, 800);
 }
 $("ver").textContent = VERSION;
 window.addEventListener("error", (e) => log("錯誤：" + (e.message || e)));
@@ -359,6 +368,7 @@ function onReading(res, from) {
   // (your turn for real, when you lead first and the swap is over: the play advice as usual)
   const sw = res.myTurn ? null : live.swapInfo();
   if (sw && sw.phase === "choose") { if (sw.hand0.join(",") !== swapShown) swapAdviseSoon(); else if (!shownTurn) setState("換牌中", "turn"); }
+  if (st.swapNote) log(st.swapNote);
   if (st.swapDone) { log(st.swapDone.got ? `換牌：換出 ${comboText(st.swapDone.gave)}，換到 ${comboText(st.swapDone.got)}` : "換牌：換了哪幾張沒看清楚"); save(); renderTrack(); if (!res.myTurn) showSwapDone(st.swapDone); }
   if (sw && sw.phase === "choose" && st.status !== "applied") return st;
   if (st.status === "unread") {

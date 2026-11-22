@@ -81,10 +81,25 @@ for (let gi = 0; gi < N; gi++) {
     // the swap: you swap what the advice's quick model would (or nothing now and then), the others their loose singles
     const H0 = g.hand[0], mine = rnd() < 0.25 ? [] : SW.autoSwap(H0);
     if (live.S.swap) live.setSwapAdvice(live.S.swap.hand0, mine);
-    // choosing: buttons on screen (read as yours), cards taken out of the row
-    for (let i = 0; i < 3; i++) { const r = dealt(reading(g, null, {})); if (rnd() < 0.6) r.myTurn = true; feed(r); }
-    if (mine.length) for (let i = 0; i < 2; i++) { const r = dealt(reading(g, null, {})); const ids = r.hand.cards.filter((c) => !mine.includes(c)); r.hand = Object.assign({}, r.hand, { cards: ids, sure: ids.map(() => true), lit: ids.map(() => true), n: ids.length }); feed(r); }
-    const T = { hands: [null, g.hand[1], g.hand[2], g.hand[3]], gave: [null, SW.autoSwap(g.hand[1]), SW.autoSwap(g.hand[2]), SW.autoSwap(g.hand[3])], seed: Math.floor(rnd() * 4294967296) };
+    // the others swap their loose singles (or nothing, now and then)
+    const T = { hands: [null, g.hand[1], g.hand[2], g.hand[3]], gave: [null], seed: Math.floor(rnd() * 4294967296) };
+    for (let q = 1; q <= 3; q++) T.gave.push(rnd() < 0.3 ? [] : SW.autoSwap(g.hand[q]));
+    if (rnd() < 0.1) { T.gave = [null, [], [], []]; }
+    const nobody = !mine.length && T.gave.every((x) => !x || !x.length);
+    // choosing: buttons on screen (read as yours), now and then a count misread once
+    for (let i = 0; i < 4; i++) {
+      const r = dealt(reading(g, null, {}));
+      if (rnd() < 0.6) r.myTurn = true;
+      if (rnd() < 0.08) { const k = SK[1 + Math.floor(rnd() * 3)]; r.seats[k] = Object.assign({}, r.seats[k], { count: 12, p: 0.9 }); }
+      feed(r);
+    }
+    // the chosen cards leave every row (not all seats at the same moment), then come back shuffled
+    const away = (r, part) => {
+      if (mine.length) { const ids = r.hand.cards.filter((c) => !mine.includes(c)); r.hand = Object.assign({}, r.hand, { cards: ids, sure: ids.map(() => true), lit: ids.map(() => true), n: ids.length }); }
+      for (let q = 1; q <= 3; q++) if (T.gave[q].length && r.seats[SK[q]].count != null && (!part || q !== 1)) r.seats[SK[q]] = Object.assign({}, r.seats[SK[q]], { count: 13 - T.gave[q].length });
+      return r;
+    };
+    if (!nobody) { feed(away(dealt(reading(g, null, {})), true)); for (let i = 0; i < 4; i++) feed(away(dealt(reading(g, null, {})), false)); }
     const hands = SW.afterSwap(H0, mine, T);
     g = B.newGame(hands, hands.findIndex((h) => B.has(h, 0)));
     tally.swaps = (tally.swaps || 0) + 1;
@@ -101,7 +116,9 @@ for (let gi = 0; gi < N; gi++) {
     if (live.S.events.some((e) => e.k === "play" || e.k === "count")) tally.misses.push(`g${gi}: a play recorded during the swap`);
     if (!B.sameSet(B.fromIds(live.S.my), g.hand[0])) tally.misses.push(`g${gi}: hand after the swap wrong`);
     // you hold ♣3 and swapped but your row came back the same: wait out the swap
-    if (g.cur === 0 && !live.S.round) { tally.waited = (tally.waited || 0) + 1; clock += 12000; settle(3); }
+    if (live.S.events.length && live.S.events.some((e) => e.k === "count" || e.k === "play")) tally.misses.push(`g${gi}: plays recorded during the swap: ${JSON.stringify(live.S.events)}`);
+    if ([1, 2, 3].some((q) => live.S.counts[q] !== 13)) tally.misses.push(`g${gi}: counts after the swap ${live.S.counts}`);
+    if (g.cur === 0 && !live.S.round) { tally[nobody ? "waitedNobody" : "waited"] = (tally[nobody ? "waitedNobody" : "waited"] || 0) + 1; clock += 12000; settle(3); }
   } else settle(3);
   while (g.winner < 0 && steps++ < 200) {
     const p = g.cur;
@@ -148,5 +165,5 @@ console.log(`lead right ${pct(tally.leadOk, tally.turns)}, owner right ${pct(tal
 console.log(`play to beat: owner ${tally.ownerOk}, size right ${tally.sizeOk}; singles known ${pct(tally.singleKnown, tally.singleTot)} (wrong ${tally.singleWrong})`);
 console.log(`counts right ${pct(tally.countOk, tally.countTot)}, cards wrongly marked played ${tally.playedWrong}`);
 console.log(`risky ${tally.risky || 0}; advice not legal ${tally.advIllegal}, PASS when you lead ${tally.advPassWhenLead}`);
-if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps - (tally.misreadDeals || 0)} (+${tally.misreadDeals || 0} with a card of the row dealt misread); you lead first and had to wait out the swap ${tally.waited || 0}`);
+if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps - (tally.misreadDeals || 0)} (+${tally.misreadDeals || 0} with a card of the row dealt misread); you lead first and had to wait out the swap ${tally.waited || 0} (nobody swapped: ${tally.waitedNobody || 0})`);
 if (tally.misses.length) console.log(tally.misses.slice(0, 15).join("\n"));
