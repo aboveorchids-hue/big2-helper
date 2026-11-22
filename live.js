@@ -184,6 +184,10 @@
     // ---------- the advice ----------
     function hash(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
     const recKey = () => { const S = L.S; return JSON.stringify([S.deal, S.shots, S.my, S.counts, S.played, S.round]); };
+    // the turn as it matters for the advice: your hand, and leading or the play to beat
+    const turnKey = () => { const S = L.S, R = S.round; return R ? JSON.stringify([S.deal, S.my, R.lead, R.top && [R.top.s, R.top.n, R.top.c, R.top.eff]]) : null; };
+    // the same position always gives the same advice (the random deals start from the position, not the moment)
+    const posSeed = () => { const S = L.S; return hash(JSON.stringify([turnKey(), S.counts, B.toIds(B.fromIds(S.played)), S.round && S.round.passed])); };
     // the plays you can make: what beats the play on the table, using only cards the game has lit up. An unread play on
     // the table could be any of the plays that light up your cards this way: what beats the strongest of them is sure to
     // be allowed; only if nothing does, what beats the weakest (the advice then says it may not be enough).
@@ -213,14 +217,14 @@
       if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
       const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
       const ev = opts.ev !== false;
-      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: hash(recKey()), ev });
+      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev });
       const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (ev ? b.pts - a.pts : b.wins - a.wins));
       return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, risky: risky && r.card.type !== B.T_PASS };
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
     function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
-    return { process, advise, reset, restore, recKey, get S() { return L.S; } };
+    return { process, advise, reset, restore, recKey, turnKey, get S() { return L.S; } };
   }
 
   const api = { create, agree, news };

@@ -1228,7 +1228,9 @@ const B2Read = (() => {
   // ---------- a play shown large near the seat that made it: an upright fan of 1 to 5 cards glowing yellow ----------
   // (or a single card in a medallion, for a 2). Each card's rank and the small suit under it are cut out, turned upright
   // by the line from rank to suit, and matched like the cards in your row.
-  const SHOWBOX = { right: [520, 100, 320, 230], top: [310, 50, 290, 200], left: [80, 100, 320, 230] };
+  // (generous boxes that overlap: whose play it is goes by where its marks are, not by the box)
+  const SHOWBOX = { right: [490, 60, 400, 290], top: [300, 30, 320, 220], left: [30, 60, 400, 290] };
+  const FANOPTS = { right: { keepEdge: true, dropLeft: true }, top: {}, left: { keepEdge: true, dropRight: true } };
   const SEATOF = { right: 1, top: 2, left: 3 };
   function grabFine(img, F, X0, Y0, w, h, step) {
     const { width: W, height: Hh, data } = img, ow = Math.round(w / step), oh = Math.round(h / step), out = new Float32Array(ow * oh * 3);
@@ -1256,8 +1258,9 @@ const B2Read = (() => {
     }
     return g >= 40 && wh >= 400;
   }
-  function readFan(img, F, box, model) {
-    const step = 0.7, [X0, Y0, w, h] = box, { P, w: dw, h: dh } = grabFine(img, F, X0, Y0, w, h, step), n = dw * dh;
+  function readFan(img, F, box, model, opts) {
+    opts = opts || {};
+    const step = opts.step || 0.7, [X0, Y0, w, h] = box, { P, w: dw, h: dh } = grabFine(img, F, X0, Y0, w, h, step), n = dw * dh;
     const L = new Float32Array(n), white = new Uint8Array(n), gold = new Uint8Array(n), red = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const r = P[i * 3], g = P[i * 3 + 1], b = P[i * 3 + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
@@ -1268,14 +1271,14 @@ const B2Read = (() => {
     const wc = K.components(white, dw, dh), lab0 = wc.lab;
     // the white areas glowing round their edge (the pile below does not glow); one cut by the box's side belongs to a
     // play shown at the next seat
-    const cand = wc.stats.filter((c) => c.area > 3000 * 0.25 / (step * step) && c.x0 > 0 && c.x1 < dw - 1), gl = new Map();
+    const cand = wc.stats.filter((c) => c.area > (opts.minArea || 750) / (step * step) && (opts.keepEdge || (c.x0 > 0 && c.x1 < dw - 1)) && !(opts.dropLeft && c.x0 === 0) && !(opts.dropRight && c.x1 === dw - 1)), gl = new Map();
     for (const c of cand) gl.set(c.id, [0, 0]);
     const R = Math.max(2, Math.round(2 / step));
     for (let y = R; y < dh - R; y++) for (let x = R; x < dw - R; x++) {
       const k = y * dw + x; if (white[k]) continue;
       for (const [dx, dy] of [[R, 0], [-R, 0], [0, R], [0, -R]]) { const id = lab0[(y + dy) * dw + x + dx], e = id && gl.get(id); if (e) { e[0]++; if (gold[k]) e[1]++; break; } }
     }
-    const keep = new Set(cand.filter((c) => { const e = gl.get(c.id); return e[0] > 20 && e[1] / e[0] > 0.12; }).map((c) => c.id));
+    const keep = new Set(cand.filter((c) => { const e = gl.get(c.id); return opts.noGlow ? e[0] > 20 : e[0] > 20 && e[1] / e[0] > 0.12; }).map((c) => c.id));
     if (!keep.size) return null;
     const area = new Uint8Array(n);
     for (let y = 0; y < dh; y++) { let lo = -1, hi = -1; for (let x = 0; x < dw; x++) if (keep.has(lab0[y * dw + x])) { if (lo < 0) lo = x; hi = x; } if (lo >= 0) for (let x = lo; x <= hi; x++) area[y * dw + x] = 1; }
@@ -1292,7 +1295,8 @@ const B2Read = (() => {
     const ic = K.components(ink, dw, dh);
     const comps = ic.stats.filter((c) => c.area >= 6 / (step * step)).map((c) => ({ ...c, w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1, cx: (c.x0 + c.x1) / 2, cy: (c.y0 + c.y1) / 2 }));
     const under = (g, t) => t.id !== g.id && t.h >= 0.35 * g.h && t.h <= 0.85 * g.h && t.cy > g.cy && Math.hypot(t.cx - g.cx, t.cy - g.cy) < 1.5 * g.h && Math.abs(t.cx - g.cx) < 0.75 * (t.cy - g.cy);
-    const tall = comps.filter((c) => c.h >= 15 / step && c.h <= 55 / step && c.w <= 1.3 * c.h);
+    const RMIN = opts.rmin || 15, RMAX = opts.rmax || 55;
+    const tall = comps.filter((c) => c.h >= RMIN / step && c.h <= RMAX / step && c.w <= 1.3 * c.h);
     const hs = tall.filter((g) => comps.some((t) => under(g, t))).map((c) => c.h).sort((a, b) => a - b);
     if (!hs.length) return null;
     const rh = hs[Math.floor(hs.length / 2)];
@@ -1316,7 +1320,7 @@ const B2Read = (() => {
       if (!best) continue;
       const th0 = Math.atan2(-(best.t.cx - g.cx), best.t.cy - g.cy);
       const r = readMark(g, best.t, th0, ic.lab, inkv, red, dw, dh, model);
-      if (r) cards.push(r);
+      if (r) { r.X = X0 + r.x * step; r.Y = Y0 + r.y * step; cards.push(r); }
     }
     return cards.length ? cards : null;
   }
@@ -1362,17 +1366,22 @@ const B2Read = (() => {
       if (!best || res.rTop > best.rTop) best = res;
     }
     if (!best) return null;
-    return { card: toB2(best.card), rTop: best.rTop, rMargin: best.rMargin, z: best.z, colourSure: best.colourSure, x: g.cx };
+    return { card: toB2(best.card), rTop: best.rTop, rMargin: best.rMargin, z: best.z, colourSure: best.colourSure, x: g.cx, y: g.cy };
   }
   // the plays shown large at the others' seats right now: [{ seat, cards, sure }]
+  // where each seat's marks lie (window px): 對家's fan high up in the middle, 上家's and 下家's lower at the sides;
+  // yours lower still in the middle (not read: your plays are known from your row)
+  const SHOWZONE = { top: (X, Y) => Y < 170 && X > 320 && X < 580, left: (X, Y) => X < 360 && Y >= 170 && Y < 262, right: (X, Y) => X > 510 && Y >= 170 && Y < 262 };
   function readShows(img, F, model) {
     const out = [];
     for (const k of ["right", "top", "left"]) {
       if (!showHint(img, F, SHOWBOX[k])) continue;
-      const cards = readFan(img, F, SHOWBOX[k], model);
-      if (!cards) continue;
-      const sure = cards.every((c) => c.rTop >= 0.85 && c.rMargin >= 0.03 && c.colourSure && Math.abs(c.z) >= 0.3) && new Set(cards.map((c) => c.card)).size === cards.length;
-      out.push({ seat: SEATOF[k], cards: cards.map((c) => c.card), sure, conf: Math.min(...cards.map((c) => c.rTop)) });
+      const all = readFan(img, F, SHOWBOX[k], model, FANOPTS[k]);
+      const cards = all ? all.filter((c) => SHOWZONE[k](c.X, c.Y)) : [];
+      if (!cards.length) continue;
+      const ids = cards.map((c) => c.card);
+      const sure = cards.every((c) => c.rTop >= 0.85 && c.rMargin >= 0.03 && c.colourSure && Math.abs(c.z) >= 0.3) && new Set(ids).size === ids.length;
+      out.push({ seat: SEATOF[k], cards: ids, sure, conf: Math.min(...cards.map((c) => c.rTop)) });
     }
     return out;
   }

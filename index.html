@@ -119,15 +119,15 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b5"></script>
-<script src="read.js?v=b5"></script>
-<script src="engine.js?v=b5"></script>
-<script src="state.js?v=b5"></script>
-<script src="live.js?v=b5"></script>
+<script src="models.js?v=b6"></script>
+<script src="read.js?v=b6"></script>
+<script src="engine.js?v=b6"></script>
+<script src="state.js?v=b6"></script>
+<script src="live.js?v=b6"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b5";
+const VERSION = "b6";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -194,7 +194,6 @@ function renderAdvice(r) {
   const warn = [];
   if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}沒有逐張讀，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
   if (r.risky) warn.push("照你亮著的牌看不出這手一定壓得過；遊戲不讓你出的話，就按 PASS");
-  for (let q = 1; q <= 3; q++) if (!S.fresh[q] && !(S.view && S.view.pass[q])) warn.push(`${SEAT[q]}的張數這次沒看清楚，沿用 ${S.counts[q]} 張`);
   const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${r.ev ? `${fmtPts(s.pts)} 分・` : ""}${Math.round(100 * s.wins / s.n)}%</span></div>`).join("") : "";
   bodyHTML = `<p class="who">${topText(R)}</p>` +
     `<div class="play"><p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
@@ -206,7 +205,12 @@ function renderAdvice(r) {
   paint();
 }
 let adviseTimer = null;
+// The advice stays for the whole turn: a later reading of the same turn (a PASS sign or a count showing up) does not
+// change it; only a different hand or a different play to beat does.
+let shownTurn = null;
 function adviseSoon() {
+  const tk = live.turnKey();
+  if (tk && tk === shownTurn && hasAdvice) { old = false; paint(); return; }
   clearTimeout(adviseTimer);
   const key = live.recKey();
   bodyHTML = `<p class="who">${live.S.round ? topText(live.S.round) : ""}</p><p class="verb wait"><span class="spin"></span>計算中…</p>`; old = false; paint();
@@ -216,7 +220,7 @@ function adviseSoon() {
     try {
       const r = live.advise({ W: B2_MODELS.W, ev: true, nDet: 300 });
       if (!r) return;
-      renderAdvice(r);
+      renderAdvice(r); shownTurn = live.turnKey();
       log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${Math.round(100 * r.stats[0].wins / r.stats[0].n)}%` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
     } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
   }, 30);
@@ -272,7 +276,12 @@ function onReading(res, from) {
   if (st.status === "err") { log(`讀到了但用不上：${st.why}`); return st; }
   if (st.status !== "applied") {
     if (res.shows && res.shows.length) renderTrack();
-    if (live.S.round && res.myTurn) setState("輪到你", "turn");
+    if (res.myTurn) {
+      // your turn on screen: the advice shown must be for this turn (your hand as read now), else it is being worked out
+      const h = res.hand && res.hand.cards;
+      if (live.S.round && h && h.length === live.S.my.length) setState("輪到你", "turn");
+      else { setState("輪到你，讀牌中…", "turn"); if (hasAdvice) { bodyHTML = '<p class="verb wait"><span class="spin"></span>讀牌中…</p>'; hasAdvice = false; shownTurn = null; old = false; paint(); } }
+    }
     else if (!res.myTurn && st.status !== "settling") { setState("等對手…"); if (hasAdvice && !old) { old = true; paint(); } }
     return st;
   }
@@ -532,7 +541,7 @@ $("startBtn").addEventListener("click", start);
 $("stopBtn").addEventListener("click", () => stop(false));
 $("fileIn").addEventListener("change", () => { fromFile($("fileIn").files[0]); $("fileIn").value = ""; });
 $("newBtn").addEventListener("click", () => {
-  live.reset(); lastShots = 0; save(); renderTrack();
+  live.reset(); lastShots = 0; shownTurn = null; save(); renderTrack();
   log("新的一局（按鈕）"); showIdle();
 });
 $("copyBtn").addEventListener("click", () => {
