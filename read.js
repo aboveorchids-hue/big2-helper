@@ -1305,7 +1305,7 @@ const B2Read = (() => {
     for (const c of tall.filter((t) => Math.abs(t.h - rh) < 0.22 * rh).sort((a, b) => a.x0 - b.x0)) {
       if (used.has(c.id)) continue;
       const g = { ids: [c.id], x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, id: c.id };
-      for (const t of tall) if (t !== c && !used.has(t.id) && t.x0 >= c.x0 + 0.25 * c.w && t.x0 - c.x1 < 0.45 * rh && Math.min(c.y1, t.y1) - Math.max(c.y0, t.y0) > 0.6 * Math.min(c.h, t.h) && Math.abs(t.h - c.h) < 0.25 * rh) { g.ids.push(t.id); g.x1 = Math.max(g.x1, t.x1); g.y0 = Math.min(g.y0, t.y0); g.y1 = Math.max(g.y1, t.y1); used.add(t.id); }
+      for (const t of tall) if (t !== c && !used.has(t.id) && t.x0 >= c.x0 + 0.25 * c.w && t.x0 - c.x1 < 0.12 * rh && Math.min(c.y1, t.y1) - Math.max(c.y0, t.y0) > 0.6 * Math.min(c.h, t.h) && Math.abs(t.h - c.h) < 0.25 * rh) { g.ids.push(t.id); g.x1 = Math.max(g.x1, t.x1); g.y0 = Math.min(g.y0, t.y0); g.y1 = Math.max(g.y1, t.y1); used.add(t.id); }
       used.add(c.id); g.cx = (g.x0 + g.x1) / 2; g.cy = (g.y0 + g.y1) / 2; g.h = g.y1 - g.y0 + 1;
       ranks.push(g);
     }
@@ -1386,6 +1386,13 @@ const B2Read = (() => {
     return out;
   }
 
+  // ---------- 「您沒有更大的牌可出」: the game's golden message across your row when nothing of yours beats the table ----
+  function noPlayBanner(img, F) {
+    const P = grab(img, F, 220, 555, 480, 40);
+    let n = 0; for (let i = 0; i < 480 * 40; i++) if (passGold(P[i * 3], P[i * 3 + 1], P[i * 3 + 2])) n++;
+    return n > 1200;
+  }
+
   // ---------- everything on the table besides your own row ----------
   function readTable(img, st, M) {
     const F = frameOf(st), seats = {};
@@ -1440,9 +1447,9 @@ const B2Read = (() => {
     const st = hand.geo ? hand.geo.strip : findStrip(LS, img);
     if (!st) return { hand, ms: Date.now() - t0 };
     const tb = readTable(img, st, M.table);
-    const pile = readPile(img, tb.F, M.cards), turn = buttonsShown(img, tb.F), raised = raisedCard(img, tb.F), shows = readShows(img, tb.F, M.cards);
-    return { hand, seats: tb.seats, pile, shows, myTurn: turn.on, turn, raised: raised > 150, raisedPx: raised, ms: Date.now() - t0, strip: st };
+    const pile = readPile(img, tb.F, M.cards), turn = buttonsShown(img, tb.F), raised = raisedCard(img, tb.F), shows = readShows(img, tb.F, M.cards), noPlay = noPlayBanner(img, tb.F);
+    return { hand, seats: tb.seats, pile, shows, noPlay, myTurn: turn.on, turn, raised: raised > 150, raisedPx: raised, ms: Date.now() - t0, strip: st };
   }
-  return { readShot, readShows, readFan, SHOWBOX, readHand, readRow, findStrip, findRow, frameOf, grab, findBadge, badgeNumber, findPass, pileWhite, readPile, buttonsShown, raisedCard, fitQuad, cardStripFrom, readTable, unpackTable, SEATBOX, PASSBOX, PILEBOX, BP, toB2, LIMITS, BW, BH, CW, VROWS: VROWS0, K };
+  return { readShot, readShows, readFan, noPlayBanner, SHOWBOX, readHand, readRow, findStrip, findRow, frameOf, grab, findBadge, badgeNumber, findPass, pileWhite, readPile, buttonsShown, raisedCard, fitQuad, cardStripFrom, readTable, unpackTable, SEATBOX, PASSBOX, PILEBOX, BP, toB2, LIMITS, BW, BH, CW, VROWS: VROWS0, K };
 })();
 if (typeof module !== "undefined") module.exports = { LocalRead, B2Read };

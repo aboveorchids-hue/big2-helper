@@ -128,6 +128,9 @@
       noteDisplays(r, now);
       noteShows(r, now);
       noteSingle(r, now);
+      // the game says nothing of yours beats the table: its message covers your row, which is the row you had (and
+      // none of it lit)
+      if (r && r.noPlay && r.myTurn && L.S.my && !r.raised) r = Object.assign({}, r, { hand: { cards: L.S.my.slice(), sure: L.S.my.map(() => true), lit: L.S.my.map(() => false), geoOk: true, n: L.S.my.length, why: "" } });
       let o = ST.observe(r);
       // your row found but some of its cards hidden (say, by the game's message over it) while it still has as many cards
       // as you had: the cards you had

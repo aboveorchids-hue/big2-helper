@@ -102,6 +102,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
+      <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
     </div>
     <div class="status" id="status"></div>
@@ -119,15 +120,15 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b6"></script>
-<script src="read.js?v=b6"></script>
-<script src="engine.js?v=b6"></script>
-<script src="state.js?v=b6"></script>
-<script src="live.js?v=b6"></script>
+<script src="models.js?v=b7"></script>
+<script src="read.js?v=b7"></script>
+<script src="engine.js?v=b7"></script>
+<script src="state.js?v=b7"></script>
+<script src="live.js?v=b7"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b6";
+const VERSION = "b7";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -220,10 +221,37 @@ function adviseSoon() {
     try {
       const r = live.advise({ W: B2_MODELS.W, ev: true, nDet: 300 });
       if (!r) return;
-      renderAdvice(r); shownTurn = live.turnKey();
+      renderAdvice(r); shownTurn = live.turnKey(); beep(r.card.type === B.T_PASS);
       log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${Math.round(100 * r.stats[0].wins / r.stats[0].n)}%` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
     } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
   }, 30);
+}
+
+// ---------- a sound when advice appears: two rising notes to play, one low note to PASS ----------
+let actx = null, soundOn = true;
+try { soundOn = localStorage.getItem("big2-sound") !== "off"; } catch (e) {}
+$("soundIn").checked = soundOn;
+$("soundIn").addEventListener("change", () => { soundOn = $("soundIn").checked; try { localStorage.setItem("big2-sound", soundOn ? "on" : "off"); } catch (e) {} if (soundOn) unlockSound(); });
+// Safari lets a page make sound only after a tap: the start button (or this switch) opens the audio
+function unlockSound() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    const o = actx.createOscillator(), g2 = actx.createGain(); g2.gain.value = 0.0001; o.connect(g2).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.02);
+  } catch (e) { log("提示音開不了：" + (e.message || e)); }
+}
+function beep(pass) {
+  if (!soundOn || !actx) return;
+  try {
+    if (actx.state === "suspended") actx.resume();
+    const t = actx.currentTime, notes = pass ? [[440, 0, 0.22]] : [[880, 0, 0.12], [1320, 0.14, 0.16]];
+    for (const [f, at, len] of notes) {
+      const o = actx.createOscillator(), g2 = actx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g2.gain.setValueAtTime(0.0001, t + at); g2.gain.exponentialRampToValueAtTime(0.35, t + at + 0.015); g2.gain.exponentialRampToValueAtTime(0.0001, t + at + len);
+      o.connect(g2).connect(actx.destination); o.start(t + at); o.stop(t + at + len + 0.02);
+    }
+  } catch (e) {}
 }
 
 // ---------- what each reading changed, for the log ----------
@@ -263,8 +291,16 @@ function readingText(r) {
 
 // ---------- one reading ----------
 let lastUnread = "", lastShots = 0;
+let noPlayTurn = false;
+function showNoPlay() {
+  bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>`;
+  hasAdvice = true; shownTurn = null; old = false; setState("輪到你", "turn"); paint();
+}
 function onReading(res, from) {
+  if (res && res.myTurn && res.noPlay) { if (!noPlayTurn) { noPlayTurn = true; showNoPlay(); beep(true); log("遊戲顯示沒有更大的牌：PASS"); } }
+  else if (res && !res.myTurn) noPlayTurn = false;
   const st = live.process(res, Date.now());
+  if (noPlayTurn && res.myTurn) return st;
   if (st.status === "unread") {
     if (st.raised) { setState("選牌中", "turn"); return st; }
     if (st.why !== lastUnread) { lastUnread = st.why; log(`沒讀到：${st.why}`); }
@@ -372,6 +408,7 @@ document.addEventListener("visibilitychange", () => { log(document.hidden ? "這
 
 async function start() {
   if (stream) return;
+  unlockSound();
   try { stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }); }
   catch (e) { log(`沒有開始分享：${e.name}：${e.message}`); stream = null; return; }
   const track = stream.getVideoTracks()[0];
