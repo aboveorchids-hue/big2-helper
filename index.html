@@ -69,6 +69,12 @@ h1 { margin: 0; font-size: 20px; }
 .support.no { color: var(--bad); font-weight: 700; }
 video { display: block; width: 96px; max-width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--raise); border-radius: 8px; margin-top: 10px; }
 details summary { cursor: pointer; font-weight: 700; color: var(--muted); font-size: 14px; }
+.track .seatrow { margin-top: 10px; font-size: 14px; }
+.track .seatrow b { color: var(--ink); }
+.track .mini { display: inline-flex; flex-wrap: wrap; gap: 3px; margin: 2px 6px 0 0; align-items: center; }
+.track .pc { min-width: 30px; height: 38px; font-size: 15px; border-radius: 6px; padding: 0 3px; }
+.track .pc.hi { border: 2px solid var(--accent); }
+.track .unk { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 6px 6px; }
 pre { margin: 10px 0 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--raise); border-radius: 10px; padding: 8px 10px; }
 textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--font-mono); font-size: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--raise); color: var(--ink); padding: 8px; }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: s .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
@@ -83,6 +89,10 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     <span class="ver" id="ver"></span>
   </header>
   <section class="card advice" id="advice" aria-live="polite"></section>
+  <details class="card track" id="trackBox">
+    <summary>記牌（點開看各家出過的牌、還沒出現的牌）</summary>
+    <div id="track"><p class="note">還沒有牌局。</p></div>
+  </details>
   <section class="card">
     <div class="actions">
       <button class="btn primary" id="startBtn" type="button">開始讀螢幕</button>
@@ -108,15 +118,15 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b3"></script>
-<script src="read.js?v=b3"></script>
-<script src="engine.js?v=b3"></script>
-<script src="state.js?v=b3"></script>
-<script src="live.js?v=b3"></script>
+<script src="models.js?v=b4"></script>
+<script src="read.js?v=b4"></script>
+<script src="engine.js?v=b4"></script>
+<script src="state.js?v=b4"></script>
+<script src="live.js?v=b4"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b3";
+const VERSION = "b4";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -220,6 +230,22 @@ function eventsText(evs) {
     return "";
   }).filter(Boolean).join("、");
 }
+// what was played, seat by seat, and the cards not seen yet (closed unless opened)
+function renderTrack() {
+  const S = live.S, el = $("track");
+  if (!S.my) { el.innerHTML = '<p class="note">還沒有牌局。</p>'; return; }
+  const mini = (ids, hi) => `<span class="mini">${sortIds(ids).map((x) => pc(x, hi && hi(x) ? "hi" : "")).join("")}</span>`;
+  const rows = [];
+  let unknown = 0;
+  for (const q of [1, 2, 3, 0]) {
+    const plays = S.events.filter((e) => (q === 0 ? e.k === "play" : e.k === "count" && e.s === q));
+    const parts = plays.map((e) => (e.c ? mini(e.c) : (unknown += e.n, `<span class="mini"><span class="unk">${e.n} 張沒讀到</span></span>`)));
+    rows.push(`<div class="seatrow"><b>${SEAT[q]}</b>${q ? `　剩 <b>${S.counts[q]}</b> 張` : `　剩 <b>${S.my.length}</b> 張`}<br>${parts.join("") || '<span class="note">還沒出牌</span>'}</div>`);
+  }
+  const unseen = B.toIds(B.unseenOf(B.fromIds(S.my), B.fromIds(S.played)));
+  rows.push(`<div class="seatrow"><b>還沒出現的牌</b>（${unseen.length} 張${unknown ? `，其中 ${unknown} 張是沒讀到的出牌` : ""}；2 和 A 有框）<br>${mini(unseen.slice().reverse(), (x) => (x >> 2) >= 11)}</div>`);
+  el.innerHTML = rows.join("");
+}
 function readingText(r) {
   const h = r.hand || {}, p = r.pile || {}, parts = [];
   parts.push(h.cards ? `手牌 ${h.n} 張${h.sure && h.sure.some((s) => !s) ? `（${h.sure.filter((s) => !s).length} 張看不清）` : ""}` : `手牌沒讀到（${h.why || "?"}）`);
@@ -243,6 +269,7 @@ function onReading(res, from) {
   if (st.status === "odd") { log(`${st.why}：${readingText(res)}`); return st; }
   if (st.status === "err") { log(`讀到了但用不上：${st.why}`); return st; }
   if (st.status !== "applied") {
+    if (res.shows && res.shows.length) renderTrack();
     if (live.S.round && res.myTurn) setState("輪到你", "turn");
     else if (!res.myTurn && st.status !== "settling") { setState("等對手…"); if (hasAdvice && !old) { old = true; paint(); } }
     return st;
@@ -250,7 +277,8 @@ function onReading(res, from) {
   const S = live.S, evs = S.events.filter((e) => e.at > lastShots);
   lastShots = S.shots;
   log(`${from}｜${readingText(res)}${evs.length ? "｜" + eventsText(evs) : ""}${st.notes && st.notes.length ? "｜" + st.notes.join("；") : ""}`);
-  save();
+  if (S.round) log(`　你的手牌 ${comboText(S.my)}｜還沒出現 ${B.toIds(B.unseenOf(B.fromIds(S.my), B.fromIds(S.played))).length} 張`);
+  save(); renderTrack();
   if (st.turn) { setState("輪到你", "turn"); adviseSoon(); }
   else { setState("等對手…"); if (hasAdvice) { old = true; paint(); } else if (stream) { bodyHTML = `<p class="verb wait">等輪到你…</p><p class="note">已經讀到牌桌了；輪到你出牌時，這裡會自動出現建議。</p>`; paint(); } }
   return st;
@@ -288,7 +316,7 @@ const WORKER_SRC = `
       const f = r.value; n++;
       const now = performance.now();
       try {
-        if (now - lastFp >= 350) {
+        if (now - lastFp >= 200) {
           lastFp = now;
           gs.drawImage(f, 0, 0, 48, 27);
           const px = gs.getImageData(0, 0, 48, 27).data, fp = new Uint8Array(48 * 27);
@@ -350,7 +378,7 @@ async function start() {
   wake();
   lastFp = null; win = null; winMiss = 0; searchMiss = 0; dims = "";
   $("startBtn").hidden = true; $("stopBtn").hidden = false;
-  timer = setInterval(tick, 450);
+  timer = setInterval(tick, 250);
   if (live.S.round) setState("讀螢幕中"); else showIdle();
 }
 function stop(byTrack) {
@@ -455,7 +483,7 @@ function tick() {
     if (pending) { src = pending; pending = null; W = src.width; H = src.height; from = "背景"; }
   } else if (v.videoWidth && v.readyState >= 2) {
     const changed = fpChanged(v);
-    if (changed || wantMore || performance.now() - lastRead > 1200) { src = v; W = v.videoWidth; H = v.videoHeight; from = "影片"; }
+    if (changed || wantMore || performance.now() - lastRead > 800) { src = v; W = v.videoWidth; H = v.videoHeight; from = "影片"; }
   }
   if (!src) return;
   busy = true;
@@ -502,8 +530,8 @@ $("startBtn").addEventListener("click", start);
 $("stopBtn").addEventListener("click", () => stop(false));
 $("fileIn").addEventListener("change", () => { fromFile($("fileIn").files[0]); $("fileIn").value = ""; });
 $("newBtn").addEventListener("click", () => {
-  live.reset(); lastShots = 0; save();
-  log("新的一局"); showIdle();
+  live.reset(); lastShots = 0; save(); renderTrack();
+  log("新的一局（按鈕）"); showIdle();
 });
 $("copyBtn").addEventListener("click", () => {
   const text = `大老二小助手 ${VERSION}｜${navigator.userAgent}\n` + lines.join("\n");
@@ -524,6 +552,7 @@ $("saveBtn").addEventListener("click", () => {
   }, "image/png");
 });
 log(`大老二小助手 ${VERSION} 載入完成`);
+renderTrack();
 if (live.S.round) { setState("上次的牌局"); adviseSoon(); } else showIdle();
 })();
 </script>

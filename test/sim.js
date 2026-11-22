@@ -4,7 +4,7 @@
 "use strict";
 const B = require("../engine.js"), ST = require("../state.js"), LV = require("../live.js"), M = require("../models.js");
 
-const N = +(process.argv[2] || 40), SEED = +(process.argv[3] || 7);
+const N = +(process.argv[2] || 40), SEED = +(process.argv[3] || 7), SHOWS = process.env.SHOWS !== "0", ONE_UNREAD = process.env.ONE === "1";
 let a = SEED >>> 0;
 const rnd = () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const SK = [null, "right", "top", "left"];
@@ -30,7 +30,7 @@ function reading(g, pile, opt) {
   const seats = {};
   for (let q = 1; q <= 3; q++) {
     const pass = !!(g.passed >> q & 1) && g.last.type !== B.T_PASS;
-    const unread = rnd() < 0.08 || (opt.busy && q === opt.who);
+    const unread = rnd() < 0.08 || (opt.busy && q === opt.who) || (ONE_UNREAD && B.count(g.hand[q]) === 1);
     seats[SK[q]] = { count: unread ? null : B.count(g.hand[q]), p: unread ? 0 : 0.97, pass, gold: 0, ps: 0 };
   }
   const p = { n: pile ? pile.ids.length : 0, busy: false, displays: [] };
@@ -46,7 +46,8 @@ function reading(g, pile, opt) {
     p.displays.push(d);
   }
   const lit = myTurn ? litOf(g) : ids.map(() => rnd() < 0.5);
-  return { hand: { cards: ids, sure: ids.map(() => true), lit, geoOk: true, n: ids.length, why: "" }, seats, pile: p, myTurn, raised: false };
+  const shows = opt.busy && opt.who && opt.disp && SHOWS && rnd() < 0.9 ? [{ seat: opt.who, cards: opt.disp.slice(), sure: true }] : [];
+  return { hand: { cards: ids, sure: ids.map(() => true), lit, geoOk: true, n: ids.length, why: "" }, seats, pile: p, shows, myTurn, raised: false };
 }
 
 const tally = { games: 0, turns: 0, leadOk: 0, ownerOk: 0, sizeOk: 0, singleKnown: 0, singleTot: 0, singleWrong: 0, advIllegal: 0, advPassWhenLead: 0,

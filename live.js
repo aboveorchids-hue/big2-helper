@@ -10,7 +10,7 @@
   const DISP_MS = 9000;          // a single read off the large display counts for this long
   const BUSY_MS = 4000;          // the table counts as moving for at most this long (then it is read anyway)
   const ODD_N = 4;               // a hand that does not fit the one before is taken after this many readings agree on it
-  const WAIT_N = 2;              // at your turn, readings to wait for every count to be read
+  const WAIT_N = 1;              // at your turn, readings to wait for every count to be read (1: none, the plays shown large say who played)
 
   const sameList = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
   // two readings of the same moment of the game (a count not read, or a single on the table not read surely, in one of
@@ -44,7 +44,7 @@
   const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], disp: [null, null, null, null], busySince: 0, odd: null };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -70,29 +70,41 @@
       if (c == null || L.seen.some((x) => x.card === c) || mine().has(c)) return;
       L.seen.push({ card: c, at: now, used: false, show: L.shows.some((x) => x.cards.includes(c)) });
       if (!L.S.played.includes(c)) L.S.played.push(c);
-      match();
+      match(now);
     }
     // plays shown large at a seat: who played which cards (each is seen in a reading or two; kept once)
+    const SHOW_SAME = 2500, SHOW_PAIR = 3500;
     function noteShows(r, now) {
       const my = mine();
       for (const sh of (r && r.shows) || []) {
         if (!sh.sure || !ST.classify(sh.cards) || sh.cards.some((c) => my.has(c))) continue;
         const key = sh.seat + ":" + sh.cards.slice().sort((a, b) => a - b).join(",");
-        if (L.shows.some((x) => x.key === key)) continue;
+        // the same play seen again (or read a little differently a moment later)
+        if (L.shows.some((x) => x.key === key || (x.seat === sh.seat && now - x.at < SHOW_SAME && x.cards.length === sh.cards.length && x.cards.filter((c) => sh.cards.includes(c)).length * 2 >= sh.cards.length))) continue;
         L.shows.push({ key, seat: sh.seat, cards: sh.cards.slice(), at: now, used: false });
         for (const c of sh.cards) if (!L.S.played.includes(c)) L.S.played.push(c);
         // a single seen on the table too is the same card
         for (const x of L.seen) if (sh.cards.includes(x.card)) x.show = true;
       }
-      match();
+      match(now);
     }
-    function match() {
+    function match(now) {
       const S = L.S, my = mine();
-      // first the plays shown large: a count going down by as many cards at the same seat, close in time
-      for (const e of S.events) {
-        if (e.k !== "count" || e.c || e.t == null) continue;
-        const x = L.shows.find((y) => !y.used && y.seat === e.s && y.cards.length === e.n && y.at >= e.t - MATCH_BEFORE && y.at <= e.t + MATCH_AFTER);
-        if (x) { e.c = x.cards.slice(); x.used = true; for (const c of x.cards) { const y = L.seen.find((z) => z.card === c); if (y) y.used = true; } }
+      // first the plays shown large: a count going down by as many cards at the same seat, close in time. A play shown
+      // large with no count seen going down (the badge hidden, or not readable at one card left) counts by itself: the
+      // seat's count goes down by it now, so the badge read later shows nothing new.
+      for (const x of L.shows) {
+        if (x.used) continue;
+        const e = S.events.find((y) => y.k === "count" && y.s === x.seat && y.n === x.cards.length && !y.byShow && y.t != null && Math.abs(y.t - x.at) <= SHOW_PAIR);
+        if (e) {
+          if (e.c) for (const c of e.c) { const z = L.seen.find((w) => w.card === c); if (z && !x.cards.includes(c)) z.used = false; }
+          e.c = x.cards.slice(); e.byShow = true; x.used = true;
+          for (const c of x.cards) { const z = L.seen.find((w) => w.card === c); if (z) z.used = true; }
+        } else if (now != null && S.my && S.counts[x.seat] >= x.cards.length) {
+          S.counts[x.seat] -= x.cards.length; S.countAt[x.seat] = S.shots;
+          S.events.push({ k: "count", s: x.seat, n: x.cards.length, c: x.cards.slice(), at: S.shots, t: x.at, byShow: true, fromShow: true, pend: true });
+          x.used = true;
+        }
       }
       for (const x of L.seen) if (my.has(x.card)) x.used = true;
       let cycle = 0, last = -Infinity;
@@ -125,12 +137,17 @@
         if (o2.ok) { r = r2; o = o2; }
       }
       if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised) }; }
+      // when your hand was last seen as it was (your play, when it comes, is after that)
+      if (L.S.my && sameList(o.guess, L.S.my)) L.handT = now;
       if (busyOf(r)) {
         if (!L.busySince) L.busySince = now;
         if (now - L.busySince < BUSY_MS) { L.ring = []; return { status: "busy" }; }
       } else L.busySince = 0;
       // settled: the same reading came up before among the last few (one odd reading in between does not matter)
-      const stable = L.ring.some((p) => agree(o, p));
+      // the first reading of your turn with your hand as it was: used at once (the play to beat is known by then from
+      // what was shown large and the counts); everything else waits for a second reading that agrees
+      const quick = o.myTurn && !L.S.round && L.S.my && sameList(o.guess, L.S.my) && L.lastO && !L.lastO.myTurn;
+      const stable = quick || L.ring.some((p) => agree(o, p));
       L.ring.push(o); if (L.ring.length > 4) L.ring.shift();
       if (!stable) return { status: "settling" };
       if (!news(o, L.lastO)) return { status: "same", turn: !!L.S.round };
@@ -150,7 +167,7 @@
       const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
       const lastShow = L.shows.length ? L.shows[L.shows.length - 1] : null;
       const show = lastShow && !lastShow.used && now - lastShow.at < MATCH_BEFORE ? { seat: lastShow.seat, cards: lastShow.cards } : null;
-      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent, show });
+      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent, show, handT: L.handT });
       if (out.err) return { status: "err", why: out.err };
       const S = out.S;
       // a display that was used up (that seat's count went down) is forgotten
@@ -160,7 +177,7 @@
       // the singles seen so far are played cards; match them to the plays
       for (const x of L.seen) if (!S.played.includes(x.card) && !(S.my || []).includes(x.card)) S.played.push(x.card);
       for (const x of L.shows) for (const c of x.cards) if (!S.played.includes(c) && !(S.my || []).includes(c)) S.played.push(c);
-      match();
+      match(now);
       return { status: "applied", turn: !!S.round, notes: out.notes };
     }
 

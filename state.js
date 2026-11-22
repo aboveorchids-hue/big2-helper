@@ -210,7 +210,9 @@
     // 1. the same hand as before? (cards only leave your row during a hand)
     let al = null, hand = null, fresh = false;
     if (S.my) al = align(S.my, S.guess, o.guess, o.sure);
-    if (al && o.guess.length === 13 && S.my.length === 13 && o.counts.every((c, q) => q === 0 || c == null || c === 13) && S.events.some((e) => e.k === "play" || e.k === "count")) al = null;
+    // (live: a new hand of 13 is a different 13; the same 13 cards with the others' counts covered is still this deal)
+    if (al && o.guess.length === 13 && S.my.length === 13 && o.counts.every((c, q) => q === 0 || c == null || c === 13) && S.events.some((e) => e.k === "play" || e.k === "count")
+        && !(opts.live && o.guess.every((c, i) => c === S.my[i]) && o.counts.some((c, q) => q > 0 && c == null))) al = null;
     if (!al) {
       if (o.unsure > 0 && S.my && o.guess.length < 13) return { S: S0, err: `手牌和上一張對不起來，而且有 ${o.unsure} 張看不清` };
       hand = o.guess.slice();
@@ -226,6 +228,10 @@
       // 2. what you played since the last screenshot
       if (al.gone.length) {
         ev(S, { k: "play", s: 0, c: al.gone, n: al.gone.length });
+        // live: plays counted from what was shown large since the last reading came after yours
+        // (those shown before your old hand was last seen came before your play)
+        const k = opts.live ? S.events.findIndex((e) => e.pend && !(opts.handT != null && e.t != null && e.t <= opts.handT)) : -1;
+        if (k >= 0) S.events.splice(k, 0, S.events.pop());
         for (const c of al.gone) if (!S.played.includes(c)) S.played.push(c);
       }
     }
@@ -246,7 +252,12 @@
     // Reading the screen live (opts.live), every play is seen as it happens: whoever put cards down last owns the table,
     // their card count says how many, and a single was read off the table when it landed (opts.disp: a single read off
     // the large display a moment before, for when the table is not clear).
-    const LV = opts.live && o.myTurn ? liveTop(S, o) : null;
+    let LV = opts.live && o.myTurn ? liveTop(S, o) : null;
+    // you lead only on an empty table: a card on it that is not from your last play means someone played after you
+    if (LV && LV.lead && o.pile.n > 0 && o.pile.card != null && o.pile.sure) {
+      let mineLast = null; for (let i = S.events.length - 1; i >= 0; i--) if (S.events[i].k === "play") { mineLast = S.events[i].c; break; }
+      if (!mineLast || !mineLast.includes(o.pile.card)) LV = null;
+    }
     let owner = null;
     if (o.myTurn) {
       if (LV && LV.owner != null) owner = LV.owner;
@@ -280,6 +291,12 @@
       let lead = first || (LV ? !!LV.lead : o.pile.n === 0 || owner == null) || owner == null;
       let top = null;
       if (!lead) {
+        // live: the play as read where it was shown large (or matched to its owner's count before): nothing to work out
+        const shown0 = LV && LV.owner === owner && LV.c && [1, 2, 5].includes(LV.c.length) ? LV.c : opts.show && opts.show.seat === owner ? opts.show.cards : null;
+        const shown = shown0 && classify(shown0) ? shown0 : null;
+        let inf = null;
+        if (shown) top = { s: owner, n: shown.length, c: shown.slice(), read: null, shown: true };
+        else {
         // its size: from how many cards its owner just put down (live), else from the table, else from what fits the
         // lit cards best
         const dn = LV && LV.owner === owner && [1, 2, 5].includes(LV.n) ? LV.n : drop[owner];
@@ -294,38 +311,36 @@
           const fit = [1, 2, 5].filter((k) => infs[k].miss === best), want = n || dn || 1;
           n = fit.includes(dn) ? dn : fit.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
         }
-        const inf = infs[n];
+        inf = infs[n];
         top = { s: owner, n, c: null, read: null };
-        // live: the play as read where it was shown large (or matched to its owner's count before)
-        const shown = LV && LV.owner === owner && LV.c && LV.c.length === n ? LV.c : opts.show && opts.show.seat === owner && opts.show.cards.length === n ? opts.show.cards : null;
-        if (shown && classify(shown)) top.c = shown.slice();
-        else if (pileCard != null && n === 1) {
+        if (pileCard != null && n === 1) {
           const t = { type: B.T_SINGLE, key: pileCard };
           const fits = inf.list.some((x) => sameTop(x, t));
           if ((pileSure && (fits || !inf.list.length)) || (!pileSure && fits && inf.list.length <= 8)) { top.c = [pileCard]; top.unsure = !pileSure; }
           else top.read = pileCard;   // read, but it does not fit the lit cards: not trusted
         }
+        }
         if (!top.c) {
           if (inf && inf.list.length) {
             // the lit cards say nothing when every play of that size would leave them as they are: then a plain one stands in
-            const all = tops(n).filter((t) => possible(t, B.fromIds(hand), B.fromIds(gone))).length, none = inf.list.length >= all;
+            const all = tops(top.n).filter((t) => possible(t, B.fromIds(hand), B.fromIds(gone))).length, none = inf.list.length >= all;
             const pool = inf.list.filter((t) => !B.isBomb(t.type)).length ? inf.list.filter((t) => !B.isBomb(t.type)) : inf.list;
             const t = pool[Math.floor((pool.length - 1) / 2)];
             top.eff = { type: t.type, key: t.key }; top.range = inf.list.length; top.miss = inf.miss; top.guess = none ? "" : guessText(inf.list);
             top.lo = { type: inf.list[0].type, key: inf.list[0].key };   // the weakest play the lit cards allow
             top.hi = { type: inf.list[inf.list.length - 1].type, key: inf.list[inf.list.length - 1].key };   // and the strongest
           }
-          else top.eff = n === 1 ? { type: B.T_SINGLE, key: 0 } : n === 2 ? { type: B.T_PAIR, key: 1 } : { type: B.T_STRAIGHT, key: 0 };
+          else top.eff = top.n === 1 ? { type: B.T_SINGLE, key: 0 } : top.n === 2 ? { type: B.T_PAIR, key: 1 } : { type: B.T_STRAIGHT, key: 0 };
         } else {
           if (!(opts.live && top.unsure)) for (const c of top.c) if (!S.played.includes(c)) S.played.push(c);
           if (!top.unsure) for (let i = S.events.length - 1; i >= 0; i--) { const e = S.events[i]; if (e.k === "count" && e.s === owner) { if (!e.c && e.n === top.c.length) e.c = top.c.slice(); break; } }
         }
         // its owner's count hidden under the play just shown large: the count read before, less this play (not when the
         // drop was already seen live)
-        const same = S0.round && S0.round.top && S0.round.top.s === owner && S0.round.top.n === n && JSON.stringify(S0.round.top.c) === JSON.stringify(top.c) && S0.my && S0.my.length === hand.length;
-        if (!(LV && LV.owner === owner) && o.counts[owner] == null && S.countAt[owner] >= 0 && !same && S.counts[owner] > n) {
-          S.counts[owner] -= n; S.est[owner] = true; drop[owner] = n;
-          ev(S, { k: "count", s: owner, n, c: top.c || undefined });
+        const same = S0.round && S0.round.top && S0.round.top.s === owner && S0.round.top.n === top.n && JSON.stringify(S0.round.top.c) === JSON.stringify(top.c) && S0.my && S0.my.length === hand.length;
+        if (!(LV && LV.owner === owner) && o.counts[owner] == null && S.countAt[owner] >= 0 && !same && S.counts[owner] > top.n) {
+          S.counts[owner] -= top.n; S.est[owner] = true; drop[owner] = top.n;
+          ev(S, { k: "count", s: owner, n: top.n, c: top.c || undefined });
         }
       }
       const passed = new Set(lead ? [] : [1, 2, 3].filter((q) => o.pass[q] && q !== owner));
@@ -345,6 +360,7 @@
     for (let q = 1; q <= 3; q++) if (o.pass[q] && !prev[q]) ev(S, { k: "pass", s: q });
     if (o.myTurn) { S.prevTurnAt = S.lastTurnAt; S.lastTurnAt = S.shots; S.turnCounts = [null, o.counts[1], o.counts[2], o.counts[3]]; }
     S.view = view;
+    for (const e of S.events) if (e.pend) delete e.pend;
     return { S, notes };
   }
 
