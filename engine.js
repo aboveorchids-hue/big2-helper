@@ -1,0 +1,492 @@
+// 大老二 engine for the page: rules, hand splitting, opponents' model and the strategy.
+// A port of the C++ simulator (big2.h / bots.h): same move order, same arithmetic, so it picks exactly the same plays.
+// Cards: id = rank*4 + suit; rank 0..12 = 3 4 5 6 7 8 9 10 J Q K A 2; suit 0..3 = ♣ ♦ ♥ ♠.
+// A set of cards is an array of 13 nibbles (bit s of entry r = card r*4+s).
+(function (root) {
+  "use strict";
+  const T_PASS = 0, T_SINGLE = 1, T_PAIR = 2, T_STRAIGHT = 3, T_FULL = 4, T_QUADS = 5, T_SF = 6, T_DRAGON = 7;
+  const TNAME = ["PASS", "單張", "一對", "順子", "葫蘆", "鐵支", "同花順", "一條龍"];
+  const PC4 = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];
+  const CTZ4 = [4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0];
+  const MSB4 = [-1, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3];
+  const WINR = [], WINTOP = [];
+  WINR[0] = [11, 12, 0, 1, 2]; WINR[9] = [12, 0, 1, 2, 3]; WINTOP[0] = WINTOP[9] = 12;
+  for (let o = 1; o <= 8; o++) { WINR[o] = [o - 1, o, o + 1, o + 2, o + 3]; WINTOP[o] = o + 3; }
+  const RANKS = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+  const SUITS = ["♣", "♦", "♥", "♠"];
+  const name = (c) => SUITS[c & 3] + RANKS[c >> 2];
+
+  // ---- card sets ----
+  const empty = () => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const fromIds = (ids) => { const s = empty(); for (const c of ids) s[c >> 2] |= 1 << (c & 3); return s; };
+  const toIds = (s) => { const o = []; for (let r = 0; r < 13; r++) for (let b = 0; b < 4; b++) if (s[r] >> b & 1) o.push(r * 4 + b); return o; };
+  const count = (s) => { let n = 0; for (let r = 0; r < 13; r++) n += PC4[s[r]]; return n; };
+  const lowest = (s) => { for (let r = 0; r < 13; r++) if (s[r]) return r * 4 + CTZ4[s[r]]; return -1; };
+  const highest = (s) => { for (let r = 12; r >= 0; r--) if (s[r]) return r * 4 + MSB4[s[r]]; return -1; };
+  const minus = (a, b) => { const o = new Array(13); for (let r = 0; r < 13; r++) o[r] = a[r] & ~b[r]; return o; };
+  const isEmpty = (s) => { for (let r = 0; r < 13; r++) if (s[r]) return false; return true; };
+  const sameSet = (a, b) => { for (let r = 0; r < 13; r++) if (a[r] !== b[r]) return false; return true; };
+  const cmpSet = (a, b) => { for (let r = 12; r >= 0; r--) if (a[r] !== b[r]) return a[r] > b[r] ? 1 : -1; return 0; };   // as 52-bit numbers
+  const has = (s, c) => (s[c >> 2] >> (c & 3) & 1) === 1;
+  const unseenOf = (hand, played) => { const o = new Array(13); for (let r = 0; r < 13; r++) o[r] = 15 & ~hand[r] & ~played[r]; return o; };
+
+  const mk = (set, type, key) => ({ set, type, key });
+  const PASS = () => ({ set: empty(), type: T_PASS, key: 0 });
+  const isBomb = (t) => t === T_QUADS || t === T_SF;
+  function beats(c, last) {
+    if (last.type === T_PASS) return true;
+    if (c.type === T_DRAGON) return last.type !== T_DRAGON || c.key > last.key;
+    if (last.type === T_DRAGON) return false;
+    if (c.type === T_SF) return last.type !== T_SF || c.key > last.key;
+    if (last.type === T_SF) return false;
+    if (c.type === T_QUADS) return last.type !== T_QUADS || c.key > last.key;
+    if (last.type === T_QUADS) return false;
+    return c.type === last.type && c.key > last.key;
+  }
+
+  // ---- move generation (same order as the C++) ----
+  function bitsOf(m) { const o = []; for (let b = 0; b < 4; b++) if (m >> b & 1) o.push(b); return o; }
+  function genSingles(H, out) { for (let r = 0; r < 13; r++) for (let b = 0; b < 4; b++) if (H[r] >> b & 1) { const s = empty(); s[r] = 1 << b; out.push(mk(s, T_SINGLE, r * 4 + b)); } }
+  function genPairs(H, out) {
+    for (let r = 0; r < 13; r++) {
+      const m = H[r];
+      if (PC4[m] < 2) continue;
+      const bs = bitsOf(m);
+      for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) { const s = empty(); s[r] = (1 << bs[i]) | (1 << bs[j]); out.push(mk(s, T_PAIR, r * 4 + bs[j])); }
+    }
+  }
+  function genStraights(H, out, wantPlain, wantSF) {
+    for (let o = 0; o < 10; o++) {
+      const R = WINR[o];
+      let ok = true;
+      for (let i = 0; i < 5; i++) if (!H[R[i]]) { ok = false; break; }
+      if (!ok) continue;
+      const B = R.map((r) => bitsOf(H[r]));
+      for (const a of B[0]) for (const b of B[1]) for (const c of B[2]) for (const d of B[3]) for (const e of B[4]) {
+        const su = [a, b, c, d, e];
+        const s = empty();
+        for (let i = 0; i < 5; i++) s[R[i]] |= 1 << su[i];
+        const flush = b === a && c === a && d === a && e === a;
+        const topSuit = CTZ4[s[WINTOP[o]]];
+        if (flush) { if (wantSF) out.push(mk(s, T_SF, o * 4 + a)); }
+        else if (wantPlain) out.push(mk(s, T_STRAIGHT, o * 4 + topSuit));
+      }
+    }
+  }
+  function genFulls(H, out) {
+    for (let t = 0; t < 13; t++) {
+      const mt = H[t], nt = PC4[mt];
+      if (nt < 3) continue;
+      const trips = [];
+      if (nt === 3) trips.push(mt);
+      else for (const b of bitsOf(mt)) trips.push(mt & ~(1 << b));
+      for (let p = 0; p < 13; p++) {
+        if (p === t) continue;
+        const mp = H[p];
+        if (PC4[mp] < 2) continue;
+        const bs = bitsOf(mp);
+        for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
+          const pr = (1 << bs[i]) | (1 << bs[j]);
+          for (const tr of trips) { const s = empty(); s[t] = tr; s[p] = pr; out.push(mk(s, T_FULL, t)); }
+        }
+      }
+    }
+  }
+  function genQuads(H, out) {
+    for (let q = 0; q < 13; q++) {
+      if (H[q] !== 15) continue;
+      for (let r = 0; r < 13; r++) { if (r === q) continue; for (const b of bitsOf(H[r])) { const s = empty(); s[q] = 15; s[r] = 1 << b; out.push(mk(s, T_QUADS, q)); } }
+    }
+  }
+  function isDragonHand(H) { if (count(H) !== 13) return false; for (let r = 0; r < 13; r++) if (!H[r]) return false; return true; }
+  function genDragon(H, out) {
+    if (!isDragonHand(H)) return;
+    const s0 = CTZ4[H[0]];
+    let same = true;
+    for (let r = 0; r < 13; r++) if (H[r] !== 1 << s0) same = false;
+    out.push(mk(H.slice(), T_DRAGON, same ? 1 : 0));
+  }
+
+  // ---- game ----
+  // g = {hand: [4 sets], played: set, last: combo, lastP, passed (bit mask), cur, first, winner, finalPlay}
+  function newGame(hands, cur) { return { hand: hands.map((h) => h.slice()), played: empty(), last: PASS(), lastP: -1, passed: 0, cur, first: true, winner: -1, finalPlay: null, nplays: 0 }; }
+  function copyGame(g) { return { hand: g.hand.map((h) => h.slice()), played: g.played.slice(), last: g.last, lastP: g.lastP, passed: g.passed, cur: g.cur, first: g.first, winner: g.winner, finalPlay: g.finalPlay, nplays: g.nplays }; }
+  function nextActor(g, p) { for (let k = 1; k <= 3; k++) { const q = (p + k) & 3; if (!(g.passed >> q & 1)) return q; } return p; }
+  function dingDa(g, p) { const q = nextActor(g, p); return q !== p && count(g.hand[q]) === 1; }
+  function genLegal(g, p) {
+    const H = g.hand[p], lt = g.last.type;
+    let out = [];
+    if (lt === T_PASS) { genSingles(H, out); genPairs(H, out); genStraights(H, out, true, true); genFulls(H, out); genQuads(H, out); genDragon(H, out); }
+    else {
+      if (lt === T_SINGLE) genSingles(H, out);
+      else if (lt === T_PAIR) genPairs(H, out);
+      else if (lt === T_STRAIGHT) genStraights(H, out, true, false);
+      else if (lt === T_FULL) genFulls(H, out);
+      if (lt !== T_DRAGON) { genQuads(H, out); genStraights(H, out, false, true); }
+      genDragon(H, out);
+      out = out.filter((c) => beats(c, g.last));
+    }
+    if (g.first) out = out.filter((c) => c.set[0] & 1);
+    if (dingDa(g, p)) { const top = highest(H); out = out.filter((c) => c.type !== T_SINGLE || c.key === top); }
+    return out;
+  }
+  function applyMove(g, c) {
+    const p = g.cur;
+    if (c.type === T_PASS) g.passed |= 1 << p;
+    else {
+      const h = g.hand[p];
+      for (let r = 0; r < 13; r++) { h[r] &= ~c.set[r]; g.played[r] |= c.set[r]; }
+      g.last = c; g.lastP = p; g.first = false; g.nplays++;
+      if (isEmpty(h)) { g.winner = p; g.finalPlay = c; return; }
+    }
+    for (let k = 1; k <= 4; k++) {
+      const q = (p + k) & 3;
+      if (q === g.lastP) { g.last = PASS(); g.passed = 0; g.cur = q; return; }
+      if (!(g.passed >> q & 1)) { g.cur = q; return; }
+    }
+  }
+
+  // ---- scoring (算分方式) ----
+  function loserPoints(h) {
+    const n = count(h);
+    if (!n) return 0;
+    let m = 1;
+    if (n >= 10) m *= 2;
+    m *= 1 << PC4[h[12]];
+    const quad = empty();
+    for (let r = 0; r < 13; r++) if (h[r] === 15) { m *= 2; quad[r] = 15; }
+    const rest = minus(h, quad);
+    for (let s = 0; s < 4; s++) for (let o = 9; o >= 0; o--) {
+      let ok = true;
+      for (let i = 0; i < 5; i++) if (!(rest[WINR[o][i]] >> s & 1)) { ok = false; break; }
+      if (ok) { m *= 2; for (let i = 0; i < 5; i++) rest[WINR[o][i]] &= ~(1 << s); }
+    }
+    return n * m;
+  }
+  function winnerMult(c) {
+    if (!c) return 1;
+    if (c.type === T_DRAGON || c.type === T_QUADS) return 2;
+    if (c.type === T_SF) return c.set[12] ? 4 : 2;
+    if (c.type === T_SINGLE && (c.key >> 2) === 12) return 2;
+    if (c.type === T_PAIR && (c.key >> 2) === 12) return 2;
+    if (c.type === T_STRAIGHT && Math.floor(c.key / 4) === 9) return 2;
+    if (c.type === T_FULL && c.key === 12) return 2;
+    return 1;
+  }
+
+  // ---- rank-level hand splitting ----
+  const countsOf = (H) => H.map((m) => PC4[m]);
+  function psSteps(c) { let s = 0; for (let r = 0; r < 13; r++) s += (c[r] >> 1) + (c[r] & 1); return s; }
+  function psWeak(c) { let w = 0; for (let r = 0; r < 13; r++) w += ((c[r] >> 1) + (c[r] & 1)) * 3 * (12 - r); return w; }
+  function listFives(c) {
+    const out = [];
+    for (let o = 0; o < 10; o++) { let ok = true; for (let i = 0; i < 5; i++) if (!c[WINR[o][i]]) { ok = false; break; } if (ok) out.push([0, o, 0]); }
+    for (let t = 0; t < 13; t++) if (c[t] >= 3) for (let p = 0; p < 13; p++) if (p !== t && c[p] >= 2) out.push([1, t, p]);
+    for (let q = 0; q < 13; q++) if (c[q] === 4) {
+      let k = -1;
+      for (let r = 0; r < 13; r++) if (r !== q && (c[r] & 1)) { k = r; break; }
+      if (k < 0) for (let r = 0; r < 13; r++) if (r !== q && c[r]) { k = r; break; }
+      if (k >= 0) out.push([2, q, k]);
+    }
+    return out;
+  }
+  function fiveApply(c, f, sg) {
+    if (f[0] === 0) for (let i = 0; i < 5; i++) c[WINR[f[1]][i]] += sg;
+    else if (f[0] === 1) { c[f[1]] += 3 * sg; c[f[2]] += 2 * sg; }
+    else { c[f[1]] += 4 * sg; c[f[2]] += sg; }
+  }
+  const fiveWeak = (f) => (f[0] === 0 ? 4 * (9 - f[1]) : f[0] === 1 ? 3 * (12 - f[1]) : 0);
+  const better = (s1, w1, s2, w2) => s1 < s2 || (s1 === s2 && w1 < w2);
+  function splitCounts(c0) {
+    const c = c0.slice();
+    const best = { steps: psSteps(c), weak: psWeak(c), f: [] };
+    const A = listFives(c);
+    for (const a of A) {
+      fiveApply(c, a, -1);
+      const s1 = 1 + psSteps(c), w1 = fiveWeak(a) + psWeak(c);
+      if (better(s1, w1, best.steps, best.weak)) { best.steps = s1; best.weak = w1; best.f = [a]; }
+      const B = listFives(c);
+      for (const b of B) {
+        fiveApply(c, b, -1);
+        const s2 = 2 + psSteps(c), w2 = fiveWeak(a) + fiveWeak(b) + psWeak(c);
+        if (better(s2, w2, best.steps, best.weak)) { best.steps = s2; best.weak = w2; best.f = [a, b]; }
+        fiveApply(c, b, +1);
+      }
+      fiveApply(c, a, +1);
+    }
+    return best;
+  }
+  const splitHand = (H) => splitCounts(countsOf(H));
+
+  // ---- could another player beat combo c? (union of unseen cards; bombs ignored) ----
+  function beatableBy(c, U) {
+    switch (c.type) {
+      case T_SINGLE: { const h = highest(U); return h >= 0 && h > c.key; }
+      case T_PAIR:
+        for (let r = c.key >> 2; r < 13; r++) {
+          const m = U[r];
+          if (PC4[m] < 2) continue;
+          if (r > (c.key >> 2)) return true;
+          if (r * 4 + MSB4[m] > c.key) return true;
+        }
+        return false;
+      case T_STRAIGHT: {
+        const o0 = Math.floor(c.key / 4);
+        for (let o = o0; o < 10; o++) {
+          let ok = true;
+          for (let i = 0; i < 5; i++) if (!U[WINR[o][i]]) { ok = false; break; }
+          if (!ok) continue;
+          if (o > o0) return true;
+          if (WINTOP[o] * 4 + MSB4[U[WINTOP[o]]] > WINTOP[o] * 4 + (c.key % 4)) return true;
+        }
+        return false;
+      }
+      case T_FULL:
+        for (let t = c.key + 1; t < 13; t++) if (PC4[U[t]] >= 3) for (let p = 0; p < 13; p++) if (p !== t && PC4[U[p]] >= 2) return true;
+        return false;
+      case T_QUADS:
+        for (let q = c.key + 1; q < 13; q++) if (U[q] === 15) return true;
+        return false;
+      default: return false;
+    }
+  }
+
+  // ---- split pieces as card combos ----
+  function pieceSingle(H, r) { const s = empty(); const b = CTZ4[H[r]]; s[r] = 1 << b; return mk(s, T_SINGLE, r * 4 + b); }
+  function piecePair(H, r) { const m = H[r]; const a = CTZ4[m]; const b = CTZ4[m & ~(1 << a)]; const s = empty(); s[r] = (1 << a) | (1 << b); return mk(s, T_PAIR, r * 4 + b); }
+  function pieceFive(H, f) {
+    if (f[0] === 0) {
+      const s = empty();
+      for (let i = 0; i < 5; i++) { const r = WINR[f[1]][i]; s[r] = 1 << CTZ4[H[r]]; }
+      let su = -1, flush = true;
+      for (let r = 0; r < 13; r++) if (s[r]) { const b = CTZ4[s[r]]; if (su < 0) su = b; else if (b !== su) flush = false; }
+      return flush ? mk(s, T_SF, f[1] * 4 + su) : mk(s, T_STRAIGHT, f[1] * 4 + CTZ4[s[WINTOP[f[1]]]]);
+    }
+    if (f[0] === 1) {
+      let t = H[f[1]], p = H[f[2]];
+      if (PC4[t] === 4) t &= ~(1 << MSB4[t]);
+      while (PC4[p] > 2) p &= ~(1 << MSB4[p]);
+      const s = empty(); s[f[1]] = t; s[f[2]] = p;
+      return mk(s, T_FULL, f[1]);
+    }
+    const s = empty(); s[f[1]] = 15; s[f[2]] = 1 << CTZ4[H[f[2]]];
+    return mk(s, T_QUADS, f[1]);
+  }
+  function splitPieces(H, sp) {
+    const out = [];
+    let rest = H.slice();
+    for (const f of sp.f) { const c = pieceFive(rest, f); out.push(c); rest = minus(rest, c.set); }
+    for (let r = 0; r < 13; r++) {
+      let m = rest[r];
+      while (PC4[m] >= 2) { const tmp = empty(); tmp[r] = m; const c = piecePair(tmp, r); out.push(c); m &= ~c.set[r]; }
+      if (m) { const tmp = empty(); tmp[r] = m; out.push(pieceSingle(tmp, r)); }
+    }
+    return out;
+  }
+  function staticStrength(c) {
+    switch (c.type) {
+      case T_SINGLE: return c.key / 51.0;
+      case T_PAIR: return (c.key >> 2) / 12.0;
+      case T_STRAIGHT: return Math.floor(c.key / 4) / 9.0;
+      case T_FULL: return c.key / 12.0;
+      default: return 1.0;
+    }
+  }
+
+  // ---- policies ----
+  const minOpp = (g, p) => { let m = 99; for (let q = 0; q < 4; q++) if (q !== p) m = Math.min(m, count(g.hand[q])); return m; };
+  const emptiesHand = (g, p, c) => c.type !== T_PASS && isEmpty(minus(g.hand[p], c.set));
+  const sameCombo = (a, b) => a.type === b.type && sameSet(a.set, b.set);
+
+  function chooseSmart(g, p, L) {
+    const H = g.hand[p];
+    const lead = g.last.type === T_PASS;
+    const mo = minOpp(g, p);
+    const nextN = count(g.hand[nextActor(g, p)]);
+    const s = splitHand(H);
+    const U = unseenOf(H, g.played);
+    if (lead) {
+      const P = splitPieces(H, s);
+      let bi = -1, bv = 1e9;
+      for (let i = 0; i < P.length; i++) {
+        if (!L.some((x) => sameSet(x.set, P[i].set))) continue;
+        let v = staticStrength(P[i]) - 0.01 * count(P[i].set);
+        if (!beatableBy(P[i], U)) v += 2.0;
+        if (mo <= 2 && P[i].type === T_SINGLE) v += 1.0;
+        if (mo === 1 && P[i].type === T_SINGLE) v += 1.0;
+        if (v < bv) { bv = v; bi = i; }
+      }
+      if (P.length <= 2) {
+        for (let i = 0; i < P.length; i++) if (!beatableBy(P[i], U)) for (let j = 0; j < L.length; j++) if (sameSet(L[j].set, P[i].set)) return P[i];
+      }
+      if (bi >= 0) return P[bi];
+      let best = -1, bs = 99, bw = 1 << 30;
+      for (let j = 0; j < L.length; j++) {
+        const s2 = splitHand(minus(H, L[j].set));
+        if (s2.steps < bs || (s2.steps === bs && s2.weak < bw)) { bs = s2.steps; bw = s2.weak; best = j; }
+      }
+      return L[best];
+    }
+    let bi = -1;
+    for (let i = 0; i < L.length; i++) {
+      if (L[i].type !== g.last.type) continue;
+      const s2 = splitHand(minus(H, L[i].set));
+      if (s2.steps > s.steps - 1) continue;
+      if (bi < 0 || L[i].key < L[bi].key) bi = i;
+    }
+    const danger = mo <= 2 || count(g.hand[g.lastP]) <= 2 || nextN <= 1;
+    if (bi >= 0) {
+      const control = !beatableBy(L[bi], U);
+      if (L[bi].set[12] && s.steps > 3 && !danger) return PASS();
+      if (control && s.steps > 4 && !danger && L[bi].type === T_SINGLE && (L[bi].key >> 2) >= 11) return PASS();
+      return L[bi];
+    }
+    if (danger) {
+      let bj = -1;
+      for (let i = 0; i < L.length; i++) if (L[i].type === g.last.type && (bj < 0 || L[i].key < L[bj].key)) bj = i;
+      if (bj >= 0) return L[bj];
+      for (let i = 0; i < L.length; i++) if (isBomb(L[i].type)) return L[i];
+    }
+    return PASS();
+  }
+
+  // weighted features of a candidate play (our strategy); order of FNAMES matches the C++
+  const FNAMES = ["steps", "weak", "nonCtrl", "pass", "shed", "mStrength", "mControl", "m2s", "bomb", "pass_x_danger", "pass_x_opp1",
+    "leadSingle_x_danger", "leadSingle_x_opp1", "nonCtrl_x_danger", "steps_x_late", "breaks", "lead5", "leadPair", "keepTop", "mControl_x_lead"];
+  const NF = FNAMES.length;
+  function featuresOf(g, p, m, steps0, U) {
+    const f = new Array(NF).fill(0);
+    const H = g.hand[p];
+    const pass = m.type === T_PASS, lead = g.last.type === T_PASS;
+    const H2 = pass ? H : minus(H, m.set);
+    const s2 = splitHand(H2);
+    const P = splitPieces(H2, s2);
+    let nonCtrl = 0;
+    for (const x of P) if (beatableBy(x, U)) nonCtrl++;
+    const mo = minOpp(g, p);
+    const danger = mo <= 2 ? 1 : 0, mo1 = mo === 1 ? 1 : 0;
+    const late = Math.max(0, 8 - count(H)) / 8.0;
+    f[0] = s2.steps; f[1] = s2.weak / 36.0; f[2] = nonCtrl; f[13] = nonCtrl * danger; f[14] = s2.steps * late;
+    const hH2 = highest(H2), hU = highest(U);
+    f[18] = (hH2 >= 0 && hU >= 0) ? (hH2 > hU ? 1 : 0) : 0;
+    if (pass) { f[3] = 1; f[9] = danger; f[10] = mo1; return f; }
+    f[4] = count(m.set);
+    f[5] = staticStrength(m);
+    const ctrl = !beatableBy(m, U);
+    f[6] = ctrl ? 1 : 0;
+    f[7] = PC4[m.set[12]];
+    f[8] = isBomb(m.type) ? 1 : 0;
+    f[15] = Math.max(0, s2.steps - (steps0 - 1));
+    if (lead) {
+      f[19] = ctrl ? 1 : 0;
+      if (m.type === T_SINGLE) { f[11] = danger; f[12] = mo1; }
+      if (count(m.set) === 5) f[16] = 1;
+      if (m.type === T_PAIR) f[17] = 1;
+    }
+    return f;
+  }
+  function candidates(g, p, L) {
+    const C = [], seen = new Map();
+    const H = g.hand[p];
+    for (const m of L) {
+      let sig = "";
+      for (let r = 0; r < 13; r++) sig += PC4[m.set[r]];
+      sig += ":" + m.type;
+      if (!seen.has(sig)) { seen.set(sig, C.length); C.push(m); continue; }
+      const at = seen.get(sig), o = C[at];
+      const cmp = cmpSet(minus(H, m.set), minus(H, o.set));
+      if (cmp > 0 || (cmp === 0 && m.key < o.key)) C[at] = m;
+    }
+    return C;
+  }
+  function chooseS(g, p, L, w) {
+    const C = candidates(g, p, L);
+    if (g.last.type !== T_PASS) C.push(PASS());
+    const H = g.hand[p];
+    const U = unseenOf(H, g.played);
+    const steps0 = splitHand(H).steps;
+    let bv = -1e18, bi = 0;
+    for (let i = 0; i < C.length; i++) {
+      const f = featuresOf(g, p, C[i], steps0, U);
+      let v = 0;
+      for (let k = 0; k < NF; k++) v += w[k] * f[k];
+      if (v > bv + 1e-12) { bv = v; bi = i; }
+    }
+    return C[bi];
+  }
+
+  // mulberry32 (same numbers as the C++ Rng32)
+  function rng32(seed) {
+    let a = seed >>> 0;
+    const next = () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (t ^ (t >>> 14)) >>> 0; };
+    return { next, below: (n) => Math.floor(next() * n / 4294967296) };
+  }
+
+  const P_SIMPLE = 0, P_SMART = 1, P_S = 4, P_PIMC = 5;
+  function choose(g, p, pol) {
+    const L = genLegal(g, p);
+    if (!L.length) return PASS();
+    for (const c of L) if (emptiesHand(g, p, c)) return c;
+    if (L.length === 1 && g.last.type === T_PASS) return L[0];
+    if (pol.type === P_S) return chooseS(g, p, L, pol.w);
+    if (pol.type === P_PIMC) return choosePIMC(g, p, L, pol).card;
+    return chooseSmart(g, p, L);
+  }
+  function playOut(g, pols) { for (let k = 0; k < 400 && g.winner < 0; k++) applyMove(g, choose(g, g.cur, pols[g.cur])); }
+
+  // Monte Carlo over the unseen cards: for each candidate, how often do I go out first?
+  function choosePIMC(g, p, L, pol) {
+    let C = candidates(g, p, L);
+    if (g.last.type !== T_PASS) C.push(PASS());
+    const rp = { type: pol.rollType, w: pol.w };
+    if (C.length === 1) return { card: C[0], stats: [{ card: C[0], wins: 0, n: 0 }], pref: C[0] };
+    const pref = choose(g, p, rp);
+    if (pol.maxCand > 0 && C.length > pol.maxCand) {
+      const H = g.hand[p];
+      const sc = C.map((c, i) => {
+        let v;
+        if (c.type === T_PASS) v = -1;
+        else { const s2 = splitHand(minus(H, c.set)); v = -s2.steps * 1000 - s2.weak; }
+        if (sameCombo(c, pref)) v = 1e9;
+        return [v, i];
+      });
+      sc.sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+      const K = [];
+      let hasPass = false;
+      for (let i = 0; i < pol.maxCand; i++) { K.push(C[sc[i][1]]); if (C[sc[i][1]].type === T_PASS) hasPass = true; }
+      if (g.last.type !== T_PASS && !hasPass) K.push(PASS());
+      C = K;
+    }
+    const U = unseenOf(g.hand[p], g.played);
+    const cnt = g.hand.map(count);
+    const wins = new Array(C.length).fill(0);
+    const pols = [0, 1, 2, 3].map((q) => (q === p ? rp : { type: P_SMART }));
+    const rnd = rng32(pol.seed >>> 0);
+    const unseen = toIds(U);
+    for (let d = 0; d < pol.nDet; d++) {
+      const deck = unseen.slice();
+      for (let i = deck.length - 1; i > 0; i--) { const j = rnd.below(i + 1); const t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+      const base = copyGame(g);
+      let k = 0;
+      for (let q = 0; q < 4; q++) if (q !== p) { const h = empty(); for (let i = 0; i < cnt[q]; i++) { const c = deck[k++]; h[c >> 2] |= 1 << (c & 3); } base.hand[q] = h; }
+      for (let i = 0; i < C.length; i++) {
+        const x = copyGame(base);
+        applyMove(x, C[i]);
+        playOut(x, pols);
+        if (x.winner === p) wins[i] += 1;
+      }
+    }
+    let bi = 0;
+    for (let i = 1; i < C.length; i++) if (wins[i] > wins[bi]) bi = i;
+    for (let i = 0; i < C.length; i++) if (wins[i] === wins[bi] && sameCombo(C[i], pref)) { bi = i; break; }
+    return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], n: pol.nDet })), pref };
+  }
+
+  const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
+    empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
+    genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, splitHand, splitPieces, beatableBy,
+    chooseSmart, chooseS, choosePIMC, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.Big2 = api;
+})(typeof self !== "undefined" ? self : this);

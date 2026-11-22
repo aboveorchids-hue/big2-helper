@@ -1,0 +1,138 @@
+// 大老二小助手：把一張張讀到的畫面變成牌局。
+// Readings come in every second or so (B2Read.readShot on a frame of the shared screen). A reading is used once two in a
+// row agree and nothing is moving on the table, and only when it shows something new; the game so far is kept by
+// B2State.apply (the same tracker as the screenshot version, told that it is reading live). At your turn the advice is
+// worked out from it: the cards still unseen, every seat's count, and the play to beat.
+(function (root) {
+  "use strict";
+  const B = root.Big2 || (typeof require !== "undefined" ? require("./engine.js") : null);
+  const ST = root.B2State || (typeof require !== "undefined" ? require("./state.js") : null);
+  const DISP_MS = 9000;          // a single read off the large display counts for this long
+  const BUSY_MS = 4000;          // the table counts as moving for at most this long (then it is read anyway)
+  const ODD_N = 4;               // a hand that does not fit the one before is taken after this many readings agree on it
+  const WAIT_N = 3;              // at your turn, readings to wait for every count to be read
+
+  const sameList = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
+  // two readings of the same moment of the game (a count not read, or a single on the table not read surely, in one of
+  // them matches anything)
+  function agree(a, b) {
+    if (!a || !b || !a.ok || !b.ok) return false;
+    if (!sameList(a.guess, b.guess) || a.myTurn !== b.myTurn) return false;
+    for (let q = 1; q <= 3; q++) {
+      if (a.pass[q] !== b.pass[q]) return false;
+      if (a.counts[q] != null && b.counts[q] != null && a.counts[q] !== b.counts[q]) return false;
+    }
+    if (a.pile.n !== b.pile.n) return false;
+    if (a.pile.sure && b.pile.sure && a.pile.card !== b.pile.card) return false;
+    return true;
+  }
+  // does reading a show anything the last reading used did not? At your turn only what decides the advice counts
+  // (your cards, the counts, the PASS signs), so the advice does not change while you look at it.
+  function news(a, b) {
+    if (!b) return true;
+    if (!sameList(a.guess, b.guess) || a.myTurn !== b.myTurn) return true;
+    for (let q = 1; q <= 3; q++) {
+      if (a.pass[q] !== b.pass[q]) return true;
+      if (a.counts[q] != null && a.counts[q] !== b.counts[q]) return true;
+    }
+    if (a.myTurn) return false;
+    if (a.pile.n !== b.pile.n) return true;
+    if (a.pile.sure && a.pile.card !== (b.pile.sure ? b.pile.card : null)) return true;
+    return false;
+  }
+  const busyOf = (r) => !!(r && r.pile && (r.pile.busy || (r.pile.displays && r.pile.displays.length)));
+
+  function create() {
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, disp: [null, null, null, null], busySince: 0, odd: null };
+
+    function noteDisplays(r, now) {
+      const ds = (r && r.pile && r.pile.displays) || [];
+      for (const d of ds) {
+        if (!(d.seat >= 1 && d.seat <= 3)) continue;
+        L.disp[d.seat] = d.card != null && d.sure ? { card: d.card, at: now } : null;
+      }
+    }
+    function dispFor(now) {
+      const o = [null, null, null, null];
+      for (let q = 1; q <= 3; q++) if (L.disp[q] && now - L.disp[q].at < DISP_MS) o[q] = L.disp[q].card;
+      return o;
+    }
+
+    // one reading; returns { status, why?, turn?, notes? }. status: applied | same | settling | busy | unread | odd | err
+    function process(r, now) {
+      now = now == null ? Date.now() : now;
+      noteDisplays(r, now);
+      const o = ST.observe(r);
+      if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised) }; }
+      if (busyOf(r)) {
+        if (!L.busySince) L.busySince = now;
+        if (now - L.busySince < BUSY_MS) { L.ring = []; return { status: "busy" }; }
+      } else L.busySince = 0;
+      // settled: the same reading came up before among the last few (one odd reading in between does not matter)
+      const stable = L.ring.some((p) => agree(o, p));
+      L.ring.push(o); if (L.ring.length > 4) L.ring.shift();
+      if (!stable) return { status: "settling" };
+      if (!news(o, L.lastO)) return { status: "same", turn: !!L.S.round };
+      // your turn with someone's count not read (and no PASS sign over it): wait a few readings for it, since it says who
+      // played last
+      if (o.myTurn && [1, 2, 3].some((q) => o.counts[q] == null && !o.pass[q]) && ++L.waitCount < WAIT_N) return { status: "settling", why: "等看清楚各家張數" };
+      L.waitCount = 0;
+      // a hand that does not fit the cards you had: a misreading, unless it keeps coming back (a new hand of 13 is fine)
+      if (L.S.my && o.guess.length !== 13 && !ST.align(L.S.my, L.S.guess, o.guess, o.sure)) {
+        const k = o.guess.join(",");
+        L.odd = L.odd && L.odd.k === k ? { k, n: L.odd.n + 1 } : { k, n: 1 };
+        if (L.odd.n < ODD_N) return { status: "odd", why: "手牌和之前的對不起來" };
+      }
+      L.odd = null;
+      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now) });
+      if (out.err) return { status: "err", why: out.err };
+      const S = out.S;
+      // a display that was used up (that seat's count went down) is forgotten
+      for (const e of S.events) if (e.at === S.shots && e.k === "count") L.disp[e.s] = null;
+      L.S = S; L.lastO = o;
+      return { status: "applied", turn: !!S.round, notes: out.notes };
+    }
+
+    // ---------- the advice ----------
+    function hash(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
+    const recKey = () => { const S = L.S; return JSON.stringify([S.deal, S.shots, S.my, S.counts, S.played, S.round]); };
+    // the plays you can make: what beats the play on the table, using only cards the game has lit up. An unread play on
+    // the table could be any of the plays that light up your cards this way: what beats the strongest of them is sure to
+    // be allowed; only if nothing does, what beats the weakest (the advice then says it may not be enough).
+    function legal(g, R, lit) {
+      const vs = (t) => { const g2 = B.copyGame(g); g2.last = { type: t.type, key: t.key, set: B.empty() }; return B.genLegal(g2, 0); };
+      const on = !R.lead && lit && lit.length === L.S.my.length ? new Set(L.S.my.filter((c, i) => lit[i])) : null;
+      const litOnly = (A) => (on ? A.filter((c) => B.toIds(c.set).every((x) => on.has(x))) : A);
+      if (on && !on.size) return { L: [], byLit: true };
+      let A = B.genLegal(g, 0), risky = false;
+      if (!R.lead && R.top && !R.top.c && R.top.hi) {
+        A = litOnly(vs(R.top.hi));
+        if (!A.length && R.top.lo) { A = litOnly(vs(R.top.lo)); risky = A.length > 0; }
+        return { L: A, byLit: !!on, risky };
+      }
+      const Af = litOnly(A);
+      return Af.length ? { L: Af, byLit: Af.length < A.length } : { L: A, byLit: false };
+    }
+    function advise(opts) {
+      opts = opts || {};
+      const S = L.S, R = S.round, g = ST.position(S);
+      if (!g || !R) return null;
+      const { L: Lg, byLit, risky } = legal(g, R, S.view && S.view.lit);
+      if (!Lg.length) return { kind: "none", card: B.PASS(), g, byLit };
+      for (const c of Lg) if (B.isEmpty(B.minus(g.hand[0], c.set))) return { kind: "finish", card: c, g, risky };
+      if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
+      const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
+      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: hash(recKey()) });
+      const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => b.wins - a.wins);
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, risky: risky && r.card.type !== B.T_PASS };
+    }
+
+    function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
+    function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
+    return { process, advise, reset, restore, recKey, get S() { return L.S; } };
+  }
+
+  const api = { create, agree, news };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.B2Live = api;
+})(typeof self !== "undefined" ? self : this);

@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>大老二小助手</title>
+<link rel="icon" href="data:,">
+<style>
+/* One narrow column (it sits beside the game in split screen): the advice first, then the controls, then the log */
+:root {
+  --bg: #ECEDF4; --surface: #FFFFFF; --raise: #F6F6FB; --ink: #1C1934; --muted: #69667F; --line: #D3D2E1;
+  --accent: #D9620F; --accent-ink: #FFFFFF; --accent-soft: #FBE3D2; --good: #23855A; --bad: #B8323F; --warn-ink: #85560F;
+  --red: #C42238; --black: #1C1934;
+  --font-body: "PingFang TC", "Heiti TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #15122B; --surface: #211D40; --raise: #2A2650; --ink: #EEEDFA; --muted: #A7A4C6; --line: #3A3566;
+    --accent: #FF8A3D; --accent-ink: #1A1206; --accent-soft: #4A2C1A; --good: #5ED39A; --bad: #FF7C88; --warn-ink: #F2B544;
+    --red: #FF6F82; --black: #EEEDFA; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px; }
+.app { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 20px; }
+.ver { color: var(--muted); font-size: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; min-width: 0; }
+.advice { min-height: 160px; transition: opacity .2s; }
+.advice.old .body { opacity: .45; }
+.state { display: inline-block; font-size: 13px; font-weight: 700; border-radius: 999px; padding: 2px 10px; background: var(--raise); color: var(--muted); }
+.state.turn { background: var(--accent); color: var(--accent-ink); }
+.state.bad { background: var(--bad); color: #fff; }
+.who { font-size: 15px; color: var(--muted); margin: 10px 0 0; }
+.who b { color: var(--ink); }
+.verb { margin: 2px 0 6px; font-size: 34px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.verb.pass { color: var(--warn-ink); }
+.verb.wait { font-size: 20px; color: var(--muted); font-weight: 700; }
+.sub { font-size: 14px; color: var(--muted); margin: 0; }
+.note { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+.note.warn { color: var(--warn-ink); font-weight: 700; }
+.row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center; }
+.pc { display: inline-flex; align-items: center; justify-content: center; min-width: 38px; height: 50px; padding: 0 4px; border-radius: 8px; background: #fff;
+  border: 1px solid var(--line); color: #1C1934; font-weight: 800; font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
+.pc.red { color: #C42238; }
+.pc.big { min-width: 50px; height: 68px; font-size: 25px; border: 2px solid var(--accent); }
+.pc.on { background: var(--accent-soft); border: 2px solid var(--accent); transform: translateY(-6px); }
+.pc.pass { border-style: dashed; color: var(--muted); font-size: 16px; padding: 0 12px; }
+.alts { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+.alts .alt { display: flex; justify-content: space-between; gap: 10px; background: var(--raise); border-radius: 10px; padding: 4px 10px; }
+.alts .alt b { color: var(--ink); font-weight: 700; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { font: inherit; font-weight: 700; min-height: 48px; padding: 0 18px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.small { min-height: 40px; font-size: 15px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.set { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; font-size: 15px; }
+.set label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.status { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 10px; }
+.status b { color: var(--ink); }
+.support.no { color: var(--bad); font-weight: 700; }
+video { display: block; width: 96px; max-width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--raise); border-radius: 8px; margin-top: 10px; }
+details summary { cursor: pointer; font-weight: 700; color: var(--muted); font-size: 14px; }
+pre { margin: 10px 0 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--raise); border-radius: 10px; padding: 8px 10px; }
+textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--font-mono); font-size: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--raise); color: var(--ink); padding: 8px; }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: s .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes s { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .pc.on { transform: none; } }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <h1>大老二小助手</h1>
+    <span class="ver" id="ver"></span>
+  </header>
+  <section class="card advice" id="advice" aria-live="polite"></section>
+  <section class="card">
+    <div class="actions">
+      <button class="btn primary" id="startBtn" type="button">開始讀螢幕</button>
+      <button class="btn" id="stopBtn" type="button" hidden>停止</button>
+      <button class="btn small" id="newBtn" type="button">新的一局</button>
+    </div>
+    <p class="note support" id="support"></p>
+    <div class="set">
+      <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
+    </div>
+    <div class="status" id="status"></div>
+    <video id="video" playsinline muted autoplay></video>
+  </section>
+  <section class="card">
+    <details>
+      <summary>紀錄（出問題時複製給 Claude）</summary>
+      <div class="actions" style="margin-top:10px">
+        <button class="btn small" id="copyBtn" type="button">複製紀錄</button>
+        <button class="btn small" id="saveBtn" type="button">存下目前畫面</button>
+      </div>
+      <textarea id="copyBox" hidden readonly aria-label="紀錄"></textarea>
+      <pre id="log"></pre>
+    </details>
+  </section>
+</main>
+<script src="models.js?v=b1"></script>
+<script src="read.js?v=b1"></script>
+<script src="engine.js?v=b1"></script>
+<script src="state.js?v=b1"></script>
+<script src="live.js?v=b1"></script>
+<script>
+"use strict";
+(function () {
+const VERSION = "b1";
+const B = window.Big2, ST = window.B2State;
+const $ = (id) => document.getElementById(id);
+const t0 = performance.now(), lines = [];
+const ts = () => ((performance.now() - t0) / 1000).toFixed(1);
+function log(msg) {
+  lines.push(`${ts()}s  ${msg}`);
+  if (lines.length > 600) lines.splice(0, lines.length - 600);
+  $("log").textContent = lines.slice(-150).join("\n");
+}
+$("ver").textContent = VERSION;
+window.addEventListener("error", (e) => log("錯誤：" + (e.message || e)));
+window.addEventListener("unhandledrejection", (e) => log("錯誤：" + ((e.reason && e.reason.message) || e.reason)));
+
+// ---------- the reader's models, the game so far ----------
+const unb64 = (b64) => { const b = atob(b64), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+const MODEL = { cards: LocalRead.unpack(B2_MODELS.LR_MODEL, unb64), table: B2Read.unpackTable(B2_MODELS.TB_MODEL, unb64) };
+const live = B2Live.create();
+const STORE = "big2-live-b1";
+function save() { try { localStorage.setItem(STORE, JSON.stringify({ t: Date.now(), S: live.S })); } catch (e) {} }
+try { const d = JSON.parse(localStorage.getItem(STORE) || "null"); if (d && d.S && Date.now() - d.t < 20 * 60 * 1000) { live.restore(d.S); log("接著上次的牌局"); } } catch (e) {}
+
+// ---------- words and cards ----------
+const SEAT = ["你", "下家", "對家", "上家"];
+const SUITG = ["♣︎", "♦︎", "♥︎", "♠︎"];
+const SIZE_NAME = { 1: "單張", 2: "一對", 5: "五張牌" };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const isRed = (c) => (c & 3) === 1 || (c & 3) === 2;
+const cardName = (c) => SUITG[c & 3] + B.RANKS[c >> 2];
+const sortIds = (a) => a.slice().sort((x, y) => x - y);
+const idsOf = (combo) => B.toIds(combo.set);
+const comboText = (ids) => sortIds(ids).map(cardName).join(" ");
+const typeName = (c) => (c.type === B.T_PASS ? "PASS" : B.TNAME[c.type]);
+const pc = (c, cls) => `<span class="pc${isRed(c) ? " red" : ""}${cls ? " " + cls : ""}">${cardName(c)}</span>`;
+
+// ---------- the advice card: a state line, then the latest advice (dimmed while the others play) ----------
+let bodyHTML = "", stateTxt = "", stateCls = "", old = false, hasAdvice = false;
+function paint() {
+  $("advice").innerHTML = `<span class="state ${stateCls}">${esc(stateTxt)}</span><div class="body">${bodyHTML}</div>`;
+  $("advice").classList.toggle("old", old);
+}
+function setState(txt, cls = "") { if (txt === stateTxt && cls === stateCls) return; stateTxt = txt; stateCls = cls; paint(); }
+function showIdle() {
+  stateTxt = stream ? "讀螢幕中" : "還沒開始"; stateCls = ""; old = false; hasAdvice = false;
+  bodyHTML = stream
+    ? `<p class="verb wait">等輪到你…</p><p class="note">輪到你出牌時，這裡會自動出現建議。</p>`
+    : `<p class="verb wait">按「開始讀螢幕」，選擇分享整個螢幕</p><p class="note">遊戲和這頁並排（分割畫面或台前調度），遊戲視窗要整個露出來。</p>`;
+  paint();
+}
+function topText(R) {
+  if (R.lead) return R.first ? "你先出，第一手要帶<b>梅花 3</b>" : "新的一輪，<b>你先出</b>";
+  const t = R.top, what = t.c ? `<b>${esc(comboText(t.c))}</b>` : `<b>${SIZE_NAME[t.n] || t.n + " 張"}</b>`;
+  return `要壓<b>${SEAT[t.s]}</b>的 ${what}`;
+}
+function renderAdvice(r) {
+  const S = live.S, R = S.round;
+  if (!R) return;
+  const c = r.card, isPass = c.type === B.T_PASS, rec = new Set(isPass ? [] : idsOf(c));
+  let line = "";
+  if (r.kind === "finish") line = "這手出完就贏了";
+  else if (r.kind === "forced") line = "只有這一種出法";
+  else if (r.kind === "none") line = R.top ? `沒有能壓${SEAT[R.top.s]}這手的牌` : "沒有能出的牌";
+  else if (r.stats && r.stats.length) line = `照這樣打，你先出完的機率約 ${Math.round(100 * r.stats[0].wins / r.stats[0].n)}%`;
+  const warn = [];
+  if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}沒有逐張讀，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
+  if (r.risky) warn.push("照你亮著的牌看不出這手一定壓得過；遊戲不讓你出的話，就按 PASS");
+  for (let q = 1; q <= 3; q++) if (!S.fresh[q] && !(S.view && S.view.pass[q])) warn.push(`${SEAT[q]}的張數這次沒看清楚，沿用 ${S.counts[q]} 張`);
+  const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${Math.round(100 * s.wins / s.n)}%</span></div>`).join("") : "";
+  bodyHTML = `<p class="who">${topText(R)}</p>` +
+    `<p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
+    (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) +
+    `<p class="note">${line}</p>` + warn.map((w) => `<p class="note warn">${w}</p>`).join("") +
+    `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, rec.has(x) ? "on" : "")).join("")}</div>` +
+    (alts ? `<div class="alts"><span>其他出法</span>${alts}</div>` : "");
+  old = false; hasAdvice = true;
+  paint();
+}
+let adviseTimer = null;
+function adviseSoon() {
+  clearTimeout(adviseTimer);
+  const key = live.recKey();
+  bodyHTML = `<p class="who">${live.S.round ? topText(live.S.round) : ""}</p><p class="verb wait"><span class="spin"></span>計算中…</p>`; old = false; paint();
+  adviseTimer = setTimeout(() => {
+    if (live.recKey() !== key) return;
+    const a0 = performance.now();
+    try {
+      const r = live.advise({ W: B2_MODELS.W });
+      if (!r) return;
+      renderAdvice(r);
+      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${r.kind}${r.stats && r.stats[0] ? " " + Math.round(100 * r.stats[0].wins / r.stats[0].n) + "%" : ""}${r.risky ? "，不確定壓得過" : ""}）｜${Math.round(performance.now() - a0)}ms`);
+    } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
+  }, 30);
+}
+
+// ---------- what each reading changed, for the log ----------
+function eventsText(evs) {
+  return evs.map((e) => {
+    if (e.k === "play") return `你出了 ${comboText(e.c)}`;
+    if (e.k === "count") return `${SEAT[e.s]}出了 ${e.n} 張${e.c ? "（" + comboText(e.c) + "）" : ""}`;
+    if (e.k === "pass") return `${SEAT[e.s]} PASS`;
+    if (e.k === "turn") return e.lead ? "輪到你先出" : `輪到你：要壓${SEAT[e.top.s]}的 ${e.top.c ? comboText(e.top.c) : e.top.n + " 張"}`;
+    return "";
+  }).filter(Boolean).join("、");
+}
+function readingText(r) {
+  const h = r.hand || {}, p = r.pile || {}, parts = [];
+  parts.push(h.cards ? `手牌 ${h.n} 張${h.sure && h.sure.some((s) => !s) ? `（${h.sure.filter((s) => !s).length} 張看不清）` : ""}` : `手牌沒讀到（${h.why || "?"}）`);
+  if (r.seats) parts.push(["right", "top", "left"].map((k, i) => { const s = r.seats[k]; return `${SEAT[i + 1]} ${s.count != null && s.p >= 0.55 ? s.count + (s.p < 0.85 ? "?" : "") : "?"}${s.pass ? " PASS" : ""}`; }).join(" "));
+  parts.push(p.displays && p.displays.length ? "有牌放大中" : p.n === 0 ? "桌上沒牌" : p.n ? `桌上 ${p.n} 張${p.cards && p.sure ? " " + comboText(p.cards) : ""}` : "");
+  if (r.myTurn) parts.push("有出牌按鈕");
+  return parts.filter(Boolean).join("｜");
+}
+
+// ---------- one reading ----------
+let lastUnread = "", lastShots = 0;
+function onReading(res, from) {
+  const st = live.process(res, Date.now());
+  if (st.status === "unread") {
+    if (st.raised) { setState("選牌中", "turn"); return st; }
+    if (st.why !== lastUnread) { lastUnread = st.why; log(`沒讀到：${st.why}`); }
+    setState("找不到牌桌（遊戲視窗要整個露出來）", "bad");
+    return st;
+  }
+  lastUnread = "";
+  if (st.status === "odd") { log(`${st.why}：${readingText(res)}`); return st; }
+  if (st.status === "err") { log(`讀到了但用不上：${st.why}`); return st; }
+  if (st.status !== "applied") {
+    if (live.S.round && res.myTurn) setState("輪到你", "turn");
+    else if (!res.myTurn && st.status !== "settling") { setState("等對手…"); if (hasAdvice && !old) { old = true; paint(); } }
+    return st;
+  }
+  const S = live.S, evs = S.events.filter((e) => e.at > lastShots);
+  lastShots = S.shots;
+  log(`${from}｜${readingText(res)}${evs.length ? "｜" + eventsText(evs) : ""}${st.notes && st.notes.length ? "｜" + st.notes.join("；") : ""}`);
+  save();
+  if (st.turn) { setState("輪到你", "turn"); adviseSoon(); }
+  else { setState("等對手…"); if (hasAdvice) { old = true; paint(); } else if (stream) { bodyHTML = `<p class="verb wait">等輪到你…</p><p class="note">已經讀到牌桌了；輪到你出牌時，這裡會自動出現建議。</p>`; paint(); } }
+  return st;
+}
+
+// ---------- reading the screen ----------
+// Pictures come from a background thread reading the stream's frames (MediaStreamTrackProcessor) when this browser has
+// it, else from the <video> element. Once the game window is found, only it is read (at up to 1600 px wide).
+const supported = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function");
+$("support").textContent = supported ? "這個瀏覽器可以分享螢幕。" : "這個瀏覽器不能分享螢幕（iPad 要 iPadOS 27 的 Safari）。仍然可以選截圖。";
+if (!supported) { $("support").classList.add("no"); $("startBtn").disabled = true; }
+const MAXFULL = 1920, MAXWIN = 1600;
+const R = { reads: 0, size: "", ms: [], wstate: "沒試", lastBeat: 0, lastN: 0 };
+let stream = null, timer = null, lastFp = null, worker = null, pending = null, wakeLock = null, busy = false, lastRead = 0, wantMore = false;
+let rot = 0, win = null, winMiss = 0, searchMiss = 0, dims = "";
+const cv = document.createElement("canvas"), g = cv.getContext("2d", { willReadFrequently: true });
+const sm = document.createElement("canvas"); sm.width = 48; sm.height = 27;
+const gs = sm.getContext("2d", { willReadFrequently: true });
+const WORKER_SRC = `
+  let running = true, fpLast = null, n = 0, lastFp = 0, lastBeat = 0, lastSent = 0, force = false;
+  const sm = new OffscreenCanvas(48, 27), gs = sm.getContext('2d', { willReadFrequently: true });
+  self.onmessage = async (e) => {
+    if (e.data && e.data.stop) { running = false; return; }
+    if (e.data && e.data.want) { force = true; return; }
+    const track = e.data.track;
+    if (typeof MediaStreamTrackProcessor !== 'function') { self.postMessage({ kind: 'fail', why: '背景執行緒沒有 MediaStreamTrackProcessor' }); return; }
+    let rd;
+    try { rd = new MediaStreamTrackProcessor({ track }).readable.getReader(); }
+    catch (err) { self.postMessage({ kind: 'fail', why: 'MediaStreamTrackProcessor：' + (err && err.name || err) }); return; }
+    self.postMessage({ kind: 'ok' });
+    while (running) {
+      let r;
+      try { r = await rd.read(); } catch (err) { self.postMessage({ kind: 'fail', why: '讀畫格：' + (err && err.name || err) }); return; }
+      if (r.done) { self.postMessage({ kind: 'end' }); return; }
+      const f = r.value; n++;
+      const now = performance.now();
+      try {
+        if (now - lastFp >= 500) {
+          lastFp = now;
+          gs.drawImage(f, 0, 0, 48, 27);
+          const px = gs.getImageData(0, 0, 48, 27).data, fp = new Uint8Array(48 * 27);
+          for (let i = 0; i < fp.length; i++) fp[i] = (px[4 * i] + px[4 * i + 1] + px[4 * i + 2]) / 3;
+          let diff = 0;
+          if (fpLast) { for (let i = 0; i < fp.length; i++) diff += Math.abs(fp[i] - fpLast[i]); diff /= fp.length; }
+          const changed = !fpLast || diff > 0.4 || force || now - lastSent >= 2000;
+          fpLast = fp;
+          if (changed) { force = false; lastSent = now; const bmp = await createImageBitmap(f); self.postMessage({ kind: 'frame', bmp, n }, [bmp]); }
+        }
+        if (now - lastBeat >= 1000) { lastBeat = now; self.postMessage({ kind: 'beat', n }); }
+      } catch (err) { self.postMessage({ kind: 'warn', why: String(err && err.name || err) }); }
+      finally { f.close(); }
+    }
+  };`;
+function startWorker(track) {
+  if (typeof Worker !== "function" || typeof OffscreenCanvas !== "function") { R.wstate = "不用"; return; }
+  let clone;
+  try {
+    clone = track.clone();
+    worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+    worker.onmessage = onWorker;
+    worker.onerror = (e) => { R.wstate = "失敗"; log("背景執行緒出錯：" + (e.message || e)); };
+    worker.postMessage({ track: clone }, [clone]);
+    R.wstate = "啟動中";
+  } catch (e) {
+    R.wstate = "不支援"; log(`背景執行緒取畫面：不支援（${e.name || e}），改用影片`);
+    try { clone && clone.stop(); } catch (x) {}
+    if (worker) { worker.terminate(); worker = null; }
+  }
+}
+function onWorker(e) {
+  const m = e.data || {};
+  if (m.kind === "ok") { R.wstate = "啟動了"; log("背景執行緒取畫面：啟動了"); }
+  else if (m.kind === "fail" || m.kind === "end") { R.wstate = m.kind === "end" ? "結束" : "失敗"; log(`背景執行緒取畫面：${R.wstate}${m.why ? "（" + m.why + "）" : ""}，改用影片`); }
+  else if (m.kind === "beat") { R.lastN = m.n; R.lastBeat = performance.now(); if (R.wstate === "啟動了" && m.n > 0) { R.wstate = "收得到畫格"; log("背景執行緒：收得到畫格"); } }
+  else if (m.kind === "frame") { R.lastBeat = performance.now(); if (pending) pending.close(); pending = m.bmp; }
+}
+const workerLive = () => worker && R.lastBeat && performance.now() - R.lastBeat < 3500 && R.lastN > 0;
+async function wake() { try { if (navigator.wakeLock && (!wakeLock || wakeLock.released)) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
+document.addEventListener("visibilitychange", () => { log(document.hidden ? "這頁到背景了" : "這頁回到前景"); if (!document.hidden && stream) wake(); });
+
+async function start() {
+  if (stream) return;
+  try { stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }); }
+  catch (e) { log(`沒有開始分享：${e.name}：${e.message}`); stream = null; return; }
+  const track = stream.getVideoTracks()[0];
+  const st = track && track.getSettings ? track.getSettings() : {};
+  log(`開始分享：${JSON.stringify({ width: st.width, height: st.height, frameRate: st.frameRate, displaySurface: st.displaySurface })}`);
+  if (track) {
+    track.addEventListener("ended", () => { log("分享被停止了"); stop(true); });
+    track.addEventListener("mute", () => log(`影像暫停（${document.hidden ? "背景" : "前景"}）`));
+    track.addEventListener("unmute", () => log(`影像恢復（${document.hidden ? "背景" : "前景"}）`));
+  }
+  const v = $("video");
+  v.srcObject = stream;
+  try { await v.play(); } catch (e) { log("影像播放：" + e.name); }
+  if (track) startWorker(track);
+  wake();
+  lastFp = null; win = null; winMiss = 0; searchMiss = 0; dims = "";
+  $("startBtn").hidden = true; $("stopBtn").hidden = false;
+  timer = setInterval(tick, 600);
+  if (live.S.round) setState("讀螢幕中"); else showIdle();
+}
+function stop(byTrack) {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (worker) { try { worker.postMessage({ stop: true }); } catch (e) {} const w = worker; setTimeout(() => w.terminate(), 300); worker = null; }
+  if (pending) { pending.close(); pending = null; }
+  if (stream) { if (!byTrack) stream.getTracks().forEach((t) => t.stop()); stream = null; log("停止讀螢幕"); }
+  try { wakeLock && wakeLock.release(); } catch (e) {}
+  $("video").srcObject = null;
+  $("startBtn").hidden = false; $("stopBtn").hidden = true;
+  setState("停止了");
+}
+// draw a source scaled by s and turned by r degrees (the shared screen can arrive lying on its side)
+function drawRot(src, W, H, s, r) {
+  const w = Math.round(W * s), h = Math.round(H * s);
+  const cw = r % 180 ? h : w, ch = r % 180 ? w : h;
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  g.setTransform(1, 0, 0, 1, cw / 2, ch / 2);
+  g.rotate((r * Math.PI) / 180);
+  g.drawImage(src, -w / 2, -h / 2, w, h);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  return { cw, ch };
+}
+const found = (res) => !!(res && res.strip && res.hand && res.hand.cards);
+const score = (res) => (found(res) ? res.hand.n + 1 : res && res.strip ? 0.5 : 0);
+// the whole screen (at most 1920 px on its long side)
+function readFull(src, W, H, r) {
+  const s = Math.min(1, MAXFULL / Math.max(W, H)), { cw, ch } = drawRot(src, W, H, s, r);
+  const img = g.getImageData(0, 0, cw, ch);
+  return { img, res: B2Read.readShot(img, MODEL), s, ox: 0, oy: 0, r };
+}
+// the game window in full-size (turned) pixels, from the black strip along its bottom
+function winFrom(t) {
+  const st = t.res.strip; if (!st) return null;
+  const len = st.x1 - st.x0, ya = st.c + st.m * st.x0, yb = st.c + st.m * st.x1;
+  const x0 = st.x0 - 0.08 * len, x1 = st.x1 + 0.08 * len, y0 = Math.min(ya, yb) - 0.82 * len, y1 = Math.max(ya, yb) + 0.12 * len;
+  return { x0: (t.ox + x0) / t.s, y0: (t.oy + y0) / t.s, x1: (t.ox + x1) / t.s, y1: (t.oy + y1) / t.s, len: len / t.s };
+}
+// just the game window, at up to 1600 px wide
+function readWin(src, W, H, r, w) {
+  const s = Math.min(1, MAXWIN / w.len), { cw, ch } = drawRot(src, W, H, s, r);
+  const x0 = Math.max(0, Math.floor(w.x0 * s)), y0 = Math.max(0, Math.floor(w.y0 * s));
+  const x1 = Math.min(cw, Math.ceil(w.x1 * s)), y1 = Math.min(ch, Math.ceil(w.y1 * s));
+  if (x1 - x0 < 50 || y1 - y0 < 50) return null;
+  const img = g.getImageData(x0, y0, x1 - x0, y1 - y0);
+  return { img, res: B2Read.readShot(img, MODEL), s, ox: x0, oy: y0, r };
+}
+function readFrame(src, W, H) {
+  const d = `${W}x${H}`;
+  if (d !== dims) { dims = d; win = null; }   // the iPad was turned
+  if (win) {
+    const t = readWin(src, W, H, rot, win);
+    if (t && t.res.strip) { winMiss = 0; if (found(t.res)) win = winFrom(t); return t; }
+    if (++winMiss < 3 && t) return t;
+    win = null; log("遊戲視窗不見了，重新找");
+  }
+  let best = readFull(src, W, H, rot);
+  if (!found(best.res) && searchMiss++ % 3 === 0) {
+    for (const r of [0, 90, 270, 180]) {
+      if (r === rot) continue;
+      const t = readFull(src, W, H, r);
+      if (score(t.res) > score(best.res)) best = t;
+    }
+  }
+  if (!found(best.res)) return best;
+  if (best.r !== rot) log(`畫面方向：轉 ${best.r}° 才是正的`);
+  rot = best.r; searchMiss = 0; win = winFrom(best); winMiss = 0;
+  const w = win;
+  log(`找到遊戲視窗：${Math.round(w.x1 - w.x0)}×${Math.round(w.y1 - w.y0)}（畫面 ${W}×${H}）`);
+  const t = readWin(src, W, H, rot, win);
+  return t && found(t.res) ? t : best;
+}
+function fpChanged(v) {
+  gs.drawImage(v, 0, 0, 48, 27);
+  const px = gs.getImageData(0, 0, 48, 27).data, fp = new Uint8Array(48 * 27);
+  for (let i = 0; i < fp.length; i++) fp[i] = (px[4 * i] + px[4 * i + 1] + px[4 * i + 2]) / 3;
+  let diff = 0;
+  if (lastFp) { for (let i = 0; i < fp.length; i++) diff += Math.abs(fp[i] - lastFp[i]); diff /= fp.length; }
+  const first = !lastFp;
+  lastFp = fp;
+  return first || diff > 0.4;
+}
+function tick() {
+  if (busy || !stream) return;
+  const v = $("video");
+  let src = null, W = 0, H = 0, from = "";
+  if (workerLive()) {
+    if (pending) { src = pending; pending = null; W = src.width; H = src.height; from = "背景"; }
+  } else if (v.videoWidth && v.readyState >= 2) {
+    const changed = fpChanged(v);
+    if (changed || wantMore || performance.now() - lastRead > 1500) { src = v; W = v.videoWidth; H = v.videoHeight; from = "影片"; }
+  }
+  if (!src) return;
+  busy = true;
+  const r0 = performance.now();
+  let t = null;
+  try { t = readFrame(src, W, H); }
+  catch (e) { log("讀畫面出錯：" + (e.message || e)); }
+  finally { if (src !== v && src.close) src.close(); busy = false; }
+  if (!t) return;
+  const sz = `${W}x${H}→${t.img.width}x${t.img.height}`;
+  if (R.size !== sz) { R.size = sz; log(`讀的畫面 ${sz}（${from}）`); }
+  R.ms.push(Math.round(performance.now() - r0)); if (R.ms.length > 50) R.ms.shift();
+  R.reads++; lastRead = performance.now();
+  renderStatus();
+  const st = onReading(t.res, from);
+  wantMore = st.status === "settling" || st.status === "busy" || st.status === "odd";
+  if (wantMore && worker) worker.postMessage({ want: true });
+}
+function renderStatus() {
+  const avg = R.ms.length ? Math.round(R.ms.reduce((a, b) => a + b, 0) / R.ms.length) : 0;
+  $("status").innerHTML = `<span>讀了 <b>${R.reads}</b> 次</span><span>每次約 <b>${avg}</b> ms</span><span>畫面 <b>${R.size || "—"}</b></span><span>背景執行緒 <b>${R.wstate}</b></span>`;
+}
+
+// a screenshot picked by hand: read it as a settled moment of the game
+async function fromFile(file) {
+  if (!file || busy) return;
+  busy = true;
+  try {
+    const bmp = await createImageBitmap(file);
+    const save0 = { win, rot, dims };
+    win = null; dims = "";
+    const t = readFrame(bmp, bmp.width, bmp.height);
+    win = save0.win; rot = save0.rot; dims = save0.dims;
+    live.process(t.res, Date.now() - 1);
+    onReading(t.res, "截圖");
+  } catch (e) { log("截圖出錯：" + (e.message || e)); }
+  finally { busy = false; }
+}
+// for testing without a shared screen: feed a picture as if it came from the stream
+window.__feed = async (blob) => { const bmp = await createImageBitmap(blob); const t = readFrame(bmp, bmp.width, bmp.height); const st = onReading(t.res, "測試"); return { status: st.status, state: stateTxt, text: $("advice").innerText }; };
+window.__live = live; window.__onReading = onReading;
+
+$("startBtn").addEventListener("click", start);
+$("stopBtn").addEventListener("click", () => stop(false));
+$("fileIn").addEventListener("change", () => { fromFile($("fileIn").files[0]); $("fileIn").value = ""; });
+$("newBtn").addEventListener("click", () => {
+  live.reset(); lastShots = 0; save();
+  log("新的一局"); showIdle();
+});
+$("copyBtn").addEventListener("click", () => {
+  const text = `大老二小助手 ${VERSION}｜${navigator.userAgent}\n` + lines.join("\n");
+  const box = $("copyBox");
+  const fallback = () => { box.hidden = false; box.value = text; box.select(); };
+  try { navigator.clipboard.writeText(text).then(() => { box.hidden = true; $("copyBtn").textContent = "已複製"; setTimeout(() => { $("copyBtn").textContent = "複製紀錄"; }, 3000); }, fallback); }
+  catch (e) { fallback(); }
+});
+$("saveBtn").addEventListener("click", () => {
+  if (!cv.width) { log("還沒有畫面可以存"); return; }
+  cv.toBlob((b) => {
+    if (!b) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = `big2-${Date.now()}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    log("存下目前畫面");
+  }, "image/png");
+});
+log(`大老二小助手 ${VERSION} 載入完成`);
+if (live.S.round) { setState("上次的牌局"); adviseSoon(); } else showIdle();
+})();
+</script>
+</body>
+</html>
