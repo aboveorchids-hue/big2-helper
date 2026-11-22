@@ -46,9 +46,10 @@
 
   // ---- move generation (same order as the C++) ----
   function bitsOf(m) { const o = []; for (let b = 0; b < 4; b++) if (m >> b & 1) o.push(b); return o; }
-  function genSingles(H, out) { for (let r = 0; r < 13; r++) for (let b = 0; b < 4; b++) if (H[r] >> b & 1) { const s = empty(); s[r] = 1 << b; out.push(mk(s, T_SINGLE, r * 4 + b)); } }
-  function genPairs(H, out) {
-    for (let r = 0; r < 13; r++) {
+  // (above: only what could beat a single or pair with this key; the same order as all of them filtered)
+  function genSingles(H, out, above = -1) { for (let r = Math.max(0, above >> 2); r < 13; r++) for (let b = 0; b < 4; b++) if (H[r] >> b & 1 && r * 4 + b > above) { const s = empty(); s[r] = 1 << b; out.push(mk(s, T_SINGLE, r * 4 + b)); } }
+  function genPairs(H, out, above = -1) {
+    for (let r = Math.max(0, above >> 2); r < 13; r++) {
       const m = H[r];
       if (PC4[m] < 2) continue;
       const bs = bitsOf(m);
@@ -61,6 +62,12 @@
       let ok = true;
       for (let i = 0; i < 5; i++) if (!H[R[i]]) { ok = false; break; }
       if (!ok) continue;
+      if (!wantPlain) {
+        // (only the straight flushes: one per suit present in all five ranks, in suit order as below)
+        const both = H[R[0]] & H[R[1]] & H[R[2]] & H[R[3]] & H[R[4]];
+        if (wantSF) for (let a = 0; a < 4; a++) if (both >> a & 1) { const s = empty(); for (let i = 0; i < 5; i++) s[R[i]] = 1 << a; out.push(mk(s, T_SF, o * 4 + a)); }
+        continue;
+      }
       const B = R.map((r) => bitsOf(H[r]));
       for (const a of B[0]) for (const b of B[1]) for (const c of B[2]) for (const d of B[3]) for (const e of B[4]) {
         const su = [a, b, c, d, e];
@@ -118,8 +125,8 @@
     let out = [];
     if (lt === T_PASS) { genSingles(H, out); genPairs(H, out); genStraights(H, out, true, true); genFulls(H, out); genQuads(H, out); genDragon(H, out); }
     else {
-      if (lt === T_SINGLE) genSingles(H, out);
-      else if (lt === T_PAIR) genPairs(H, out);
+      if (lt === T_SINGLE) genSingles(H, out, g.last.key);
+      else if (lt === T_PAIR) genPairs(H, out, g.last.key);
       else if (lt === T_STRAIGHT) genStraights(H, out, true, false);
       else if (lt === T_FULL) genFulls(H, out);
       if (lt !== T_DRAGON) { genQuads(H, out); genStraights(H, out, false, true); }
@@ -226,7 +233,30 @@
     }
     return best;
   }
-  const splitHand = (H) => splitCounts(countsOf(H));
+  // (within one piece of advice the same hands come up again and again in the simulated games: each is split once)
+  let SPLIT = null;
+  function splitAfter(H, set) {
+    if (!SPLIT) return splitHand(minus(H, set));
+    let key = 0;
+    for (let r = 12; r >= 0; r--) key = key * 5 + PC4[H[r] & ~set[r]];
+    let s = SPLIT.get(key);
+    if (s === undefined) { s = splitCounts(countsOf(minus(H, set))); if (SPLIT.size < 300000) SPLIT.set(key, s); }
+    return s;
+  }
+  // fn() with the cache on (the advice turns it on for its simulations; it is let go afterwards)
+  function withSplitCache(fn) {
+    if (SPLIT) return fn();
+    SPLIT = new Map();
+    try { return fn(); } finally { SPLIT = null; }
+  }
+  function splitHand(H) {
+    if (!SPLIT) return splitCounts(countsOf(H));
+    let key = 0;
+    for (let r = 12; r >= 0; r--) key = key * 5 + PC4[H[r]];
+    let s = SPLIT.get(key);
+    if (s === undefined) { s = splitCounts(countsOf(H)); if (SPLIT.size < 300000) SPLIT.set(key, s); }
+    return s;
+  }
 
   // ---- could another player beat combo c? (union of unseen cards; bombs ignored) ----
   function beatableBy(c, U) {
@@ -293,6 +323,29 @@
     }
     return out;
   }
+  // how many pieces of the split (splitPieces) another player could beat (beatableBy), without making the pieces
+  function nonCtrlOf(H, sp, U) {
+    let n = 0, rest = H;
+    if (sp.f.length) {
+      rest = H.slice();
+      for (const f of sp.f) { const c = pieceFive(rest, f); if (beatableBy(c, U)) n++; for (let r = 0; r < 13; r++) rest[r] &= ~c.set[r]; }
+    }
+    const hU = highest(U);
+    for (let r = 0; r < 13; r++) {
+      let m = rest[r];
+      while (PC4[m] >= 2) {
+        const a = CTZ4[m], b = CTZ4[m & ~(1 << a)], key = r * 4 + b;
+        for (let r2 = r; r2 < 13; r2++) {
+          const u = U[r2];
+          if (PC4[u] < 2) continue;
+          if (r2 > r || r2 * 4 + MSB4[u] > key) { n++; break; }
+        }
+        m &= ~((1 << a) | (1 << b));
+      }
+      if (m && hU >= 0 && hU > r * 4 + CTZ4[m]) n++;
+    }
+    return n;
+  }
   function staticStrength(c) {
     switch (c.type) {
       case T_SINGLE: return c.key / 51.0;
@@ -305,7 +358,6 @@
 
   // ---- policies ----
   const minOpp = (g, p) => { let m = 99; for (let q = 0; q < 4; q++) if (q !== p) m = Math.min(m, count(g.hand[q])); return m; };
-  const emptiesHand = (g, p, c) => c.type !== T_PASS && isEmpty(minus(g.hand[p], c.set));
   const sameCombo = (a, b) => a.type === b.type && sameSet(a.set, b.set);
 
   function chooseSmart(g, p, L) {
@@ -317,9 +369,11 @@
     const U = unseenOf(H, g.played);
     if (lead) {
       const P = splitPieces(H, s);
+      const top = dingDa(g, p) ? highest(H) : -1;
+      const legalLead = (c) => (!g.first || (c.set[0] & 1)) && (top < 0 || c.type !== T_SINGLE || c.key === top);
       let bi = -1, bv = 1e9;
       for (let i = 0; i < P.length; i++) {
-        if (!L.some((x) => sameSet(x.set, P[i].set))) continue;
+        if (!legalLead(P[i])) continue;
         let v = staticStrength(P[i]) - 0.01 * count(P[i].set);
         if (!beatableBy(P[i], U)) v += 2.0;
         if (mo <= 2 && P[i].type === T_SINGLE) v += 1.0;
@@ -327,12 +381,12 @@
         if (v < bv) { bv = v; bi = i; }
       }
       if (P.length <= 2) {
-        for (let i = 0; i < P.length; i++) if (!beatableBy(P[i], U)) for (let j = 0; j < L.length; j++) if (sameSet(L[j].set, P[i].set)) return P[i];
+        for (let i = 0; i < P.length; i++) if (!beatableBy(P[i], U) && legalLead(P[i])) return P[i];
       }
       if (bi >= 0) return P[bi];
       let best = -1, bs = 99, bw = 1 << 30;
       for (let j = 0; j < L.length; j++) {
-        const s2 = splitHand(minus(H, L[j].set));
+        const s2 = splitAfter(H, L[j].set);
         if (s2.steps < bs || (s2.steps === bs && s2.weak < bw)) { bs = s2.steps; bw = s2.weak; best = j; }
       }
       return L[best];
@@ -340,7 +394,7 @@
     let bi = -1;
     for (let i = 0; i < L.length; i++) {
       if (L[i].type !== g.last.type) continue;
-      const s2 = splitHand(minus(H, L[i].set));
+      const s2 = splitAfter(H, L[i].set);
       if (s2.steps > s.steps - 1) continue;
       if (bi < 0 || L[i].key < L[bi].key) bi = i;
     }
@@ -370,9 +424,7 @@
     const pass = m.type === T_PASS, lead = g.last.type === T_PASS;
     const H2 = pass ? H : minus(H, m.set);
     const s2 = splitHand(H2);
-    const P = splitPieces(H2, s2);
-    let nonCtrl = 0;
-    for (const x of P) if (beatableBy(x, U)) nonCtrl++;
+    const nonCtrl = nonCtrlOf(H2, s2, U);
     const mo = minOpp(g, p);
     const danger = mo <= 2 ? 1 : 0, mo1 = mo === 1 ? 1 : 0;
     const late = Math.max(0, 8 - count(H)) / 8.0;
@@ -399,9 +451,9 @@
     const C = [], seen = new Map();
     const H = g.hand[p];
     for (const m of L) {
-      let sig = "";
-      for (let r = 0; r < 13; r++) sig += PC4[m.set[r]];
-      sig += ":" + m.type;
+      let sig = 0;
+      for (let r = 12; r >= 0; r--) sig = sig * 5 + PC4[m.set[r]];
+      sig = sig * 8 + m.type;
       if (!seen.has(sig)) { seen.set(sig, C.length); C.push(m); continue; }
       const at = seen.get(sig), o = C[at];
       const cmp = cmpSet(minus(H, m.set), minus(H, o.set));
@@ -433,10 +485,12 @@
   }
 
   const P_SIMPLE = 0, P_SMART = 1, P_S = 4, P_PIMC = 5;
+  const sizeOf = (c) => (c.type === T_SINGLE ? 1 : c.type === T_PAIR ? 2 : c.type === T_DRAGON ? 13 : c.type === T_PASS ? 0 : 5);
   function choose(g, p, pol) {
     const L = genLegal(g, p);
     if (!L.length) return PASS();
-    for (const c of L) if (emptiesHand(g, p, c)) return c;
+    const nH = count(g.hand[p]);
+    if (nH <= 5 || nH === 13) for (const c of L) if (sizeOf(c) === nH) return c;
     if (L.length === 1 && g.last.type === T_PASS) return L[0];
     if (pol.type === P_S) return chooseS(g, p, L, pol.w);
     if (pol.type === P_PIMC) return choosePIMC(g, p, L, pol).card;
@@ -445,7 +499,8 @@
   function playOut(g, pols) { for (let k = 0; k < 400 && g.winner < 0; k++) applyMove(g, choose(g, g.cur, pols[g.cur])); }
 
   // Monte Carlo over the unseen cards: for each candidate, how often do I go out first?
-  function choosePIMC(g, p, L, pol) {
+  function choosePIMC(g, p, L, pol) { return withSplitCache(() => choosePIMC1(g, p, L, pol)); }
+  function choosePIMC1(g, p, L, pol) {
     let C = candidates(g, p, L);
     if (g.last.type !== T_PASS) C.push(PASS());
     const rp = { type: pol.rollType, w: pol.w };
@@ -521,7 +576,7 @@
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
     chooseSmart, chooseS, choosePIMC, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
-    genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet };
+    genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;
 })(typeof self !== "undefined" ? self : this);

@@ -50,10 +50,11 @@
   }
 
   // the advice for a hand of 13 (card ids): { best, list: [{ gave, pts, wins, n }] best first, ms }
-  // opts: keep (choices played out), nQuick (refills per choice in the quick rating), stages ([games so far, choices kept
-  //       after]), W (the strategy weights for your own play in the games), budget (ms to stop at, roughly), aim ("pts" |
+  // opts: keep (choices played out), nQuick (refills per choice in the quick rating), adapt ({ z, min, max, batch }: see
+  //       below), W (the strategy weights for your own play in the games), budget (ms to stop at, roughly), aim ("pts" |
   //       "win")
-  function advise(myIds, opts) {
+  function advise(myIds, opts) { return B.withSplitCache(() => advise1(myIds, opts)); }
+  function advise1(myIds, opts) {
     opts = opts || {};
     const t0 = Date.now();
     const my = myIds.slice().sort((a, b) => a - b);
@@ -72,32 +73,41 @@
     const short = all.slice(0, keep);
     const must = [[], autoSwap(H)];
     for (const m of must) if (!short.some((x) => x.gave.join() === m.join())) short.push(all.find((x) => x.gave.join() === m.join()));
-    // 2. full games for the short list, the same tables for every choice; the weaker half is dropped twice on the way
-    // (not swapping is always played out, to compare with)
+    // 2. full games for the short list, the same tables for every choice. From `min` tables on, every `batch` tables a
+    // choice drops out once it is behind the leader by more than z standard errors of the difference on those tables;
+    // stop when one choice is left (not swapping is always played out, to compare with), at `max` tables, or at the
+    // time budget
     const pol = [{ type: B.P_S, w: opts.W || (root.B2_MODELS && root.B2_MODELS.W) }, { type: B.P_SMART }, { type: B.P_SMART }, { type: B.P_SMART }];
     if (!pol[0].w) pol[0] = { type: B.P_SMART };
     const res = short.map((x) => ({ gave: x.gave, pts: 0, wins: 0, n: 0, out: false }));
     // the aim: points on average (opts.aim "pts", the default) or how often you go out first ("win")
     const win = opts.aim === "win";
     const val = (x) => (win ? x.wins : x.pts) / Math.max(1, x.n), valAvg = (x) => (win ? x.wins / Math.max(1, x.n) : x.pts);
-    const stages = opts.stages || [[100, 6], [400, 3], [1000, 0]];
-    let d = 0;
-    for (const [upTo, keepNext] of stages) {
-      for (; d < upTo; d++) {
-        if (d >= 60 && Date.now() - t0 > budget) break;
-        const T = sampleTable(unseen, rnd);
-        for (const x of res) {
-          if (x.out) continue;
-          const hands = afterSwap(H, x.gave, T);
-          let cur = 0; for (let q = 0; q < 4; q++) if (B.has(hands[q], 0)) cur = q;
-          const g = B.newGame(hands, cur);
-          B.playOut(g, pol);
-          x.pts += B.pointsFor(g, 0); if (g.winner === 0) x.wins++; x.n++;
-        }
-      }
-      if (!keepNext || d < upTo) break;
-      const alive = res.filter((x) => !x.out).sort((a, b) => val(b) - val(a));
-      alive.forEach((x, i) => { if (i >= keepNext && x.gave.length) x.out = true; });
+    const A = Object.assign({ z: 2.5, min: 200, max: 3000, batch: 100 }, opts.adapt || {});
+    const V = res.map(() => new Float32Array(A.max));
+    for (let d = 0; d < A.max; d++) {
+      if (d >= 60 && Date.now() - t0 > budget) break;
+      const T = sampleTable(unseen, rnd);
+      res.forEach((x, i) => {
+        if (x.out) return;
+        const hands = afterSwap(H, x.gave, T);
+        let cur = 0; for (let q = 0; q < 4; q++) if (B.has(hands[q], 0)) cur = q;
+        const g = B.newGame(hands, cur);
+        B.playOut(g, pol);
+        const s = B.pointsFor(g, 0), w = g.winner === 0 ? 1 : 0;
+        x.pts += s; x.wins += w; V[i][x.n] = win ? w : s; x.n++;
+      });
+      if ((d + 1) % A.batch || d + 1 < A.min) continue;
+      let b = -1;
+      res.forEach((x, i) => { if (!x.out && (b < 0 || val(x) > val(res[b]))) b = i; });
+      res.forEach((x, i) => {
+        if (x.out || i === b || !x.gave.length) return;
+        let s1 = 0, s2 = 0;
+        for (let j = 0; j < x.n; j++) { const dd = V[b][j] - V[i][j]; s1 += dd; s2 += dd * dd; }
+        const md = s1 / x.n, se = Math.sqrt(Math.max(1e-12, s2 / x.n - md * md) / x.n);
+        if (md > A.z * se) x.out = true;
+      });
+      if (res.filter((x) => !x.out && (x.gave.length || res[b] === x)).length <= 1) break;
     }
     for (const x of res) x.pts /= Math.max(1, x.n);
     // the choices played out longest first (their averages are the surest), best first among them; ties: fewer cards
