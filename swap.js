@@ -51,7 +51,8 @@
 
   // the advice for a hand of 13 (card ids): { best, list: [{ gave, pts, wins, n }] best first, ms }
   // opts: keep (choices played out), nQuick (refills per choice in the quick rating), stages ([games so far, choices kept
-  //       after]), W (the strategy weights for your own play in the games), budget (ms to stop at, roughly)
+  //       after]), W (the strategy weights for your own play in the games), budget (ms to stop at, roughly), aim ("pts" |
+  //       "win")
   function advise(myIds, opts) {
     opts = opts || {};
     const t0 = Date.now();
@@ -76,6 +77,9 @@
     const pol = [{ type: B.P_S, w: opts.W || (root.B2_MODELS && root.B2_MODELS.W) }, { type: B.P_SMART }, { type: B.P_SMART }, { type: B.P_SMART }];
     if (!pol[0].w) pol[0] = { type: B.P_SMART };
     const res = short.map((x) => ({ gave: x.gave, pts: 0, wins: 0, n: 0, out: false }));
+    // the aim: points on average (opts.aim "pts", the default) or how often you go out first ("win")
+    const win = opts.aim === "win";
+    const val = (x) => (win ? x.wins : x.pts) / Math.max(1, x.n), valAvg = (x) => (win ? x.wins / Math.max(1, x.n) : x.pts);
     const stages = opts.stages || [[100, 6], [400, 3], [1000, 0]];
     let d = 0;
     for (const [upTo, keepNext] of stages) {
@@ -92,12 +96,12 @@
         }
       }
       if (!keepNext || d < upTo) break;
-      const alive = res.filter((x) => !x.out).sort((a, b) => b.pts - a.pts);
+      const alive = res.filter((x) => !x.out).sort((a, b) => val(b) - val(a));
       alive.forEach((x, i) => { if (i >= keepNext && x.gave.length) x.out = true; });
     }
     for (const x of res) x.pts /= Math.max(1, x.n);
     // the choices played out longest first (their averages are the surest), best first among them; ties: fewer cards
-    res.sort((a, b) => b.n - a.n || b.pts - a.pts || a.gave.length - b.gave.length);
+    res.sort((a, b) => b.n - a.n || valAvg(b) - valAvg(a) || a.gave.length - b.gave.length);
     return { best: res[0], list: res, none: res.find((x) => !x.gave.length), ms: Date.now() - t0 };
   }
 

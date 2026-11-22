@@ -65,6 +65,7 @@ h1 { margin: 0; font-size: 20px; }
 .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .set { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; font-size: 15px; }
 .set label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set select { font: inherit; font-size: 15px; min-height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 0 8px; max-width: 100%; }
 .status { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 10px; }
 .status b { color: var(--ink); }
 .support.no { color: var(--bad); font-weight: 700; }
@@ -102,6 +103,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
+      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（平均每局分數最多）</option><option value="win">勝率優先（先出完的機率最高）</option></select></label>
       <label><input id="swapIn" type="checkbox"> 換牌局（每局開始先換 0～3 張）</label>
       <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
@@ -121,16 +123,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b10"></script>
-<script src="read.js?v=b10"></script>
-<script src="engine.js?v=b10"></script>
-<script src="state.js?v=b10"></script>
-<script src="live.js?v=b10"></script>
-<script src="swap.js?v=b10"></script>
+<script src="models.js?v=b11"></script>
+<script src="read.js?v=b11"></script>
+<script src="engine.js?v=b11"></script>
+<script src="state.js?v=b11"></script>
+<script src="live.js?v=b11"></script>
+<script src="swap.js?v=b11"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b10";
+const VERSION = "b11";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -173,6 +175,7 @@ const idsOf = (combo) => B.toIds(combo.set);
 const comboText = (ids) => sortIds(ids).map(cardName).join(" ");
 const typeName = (c) => (c.type === B.T_PASS ? "PASS" : B.TNAME[c.type]);
 const fmtPts = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+const pct = (x) => `${(100 * x.wins / Math.max(1, x.n)).toFixed(1)}%`;
 const pc = (c, cls) => `<span class="pc${isRed(c) ? " red" : ""}${cls ? " " + cls : ""}">${cardName(c)}</span>`;
 
 // ---------- the advice card: a state line, then the latest advice (dimmed while the others play) ----------
@@ -202,11 +205,11 @@ function renderAdvice(r) {
   if (r.kind === "finish") line = "這手出完就贏了";
   else if (r.kind === "forced") line = "只有這一種出法";
   else if (r.kind === "none") line = R.top ? `沒有能壓${SEAT[R.top.s]}這手的牌` : "沒有能出的牌";
-  else if (r.stats && r.stats.length) { const t = r.stats[0]; line = r.ev ? `照這樣打，平均每局 <b>${fmtPts(t.pts)} 分</b>（先出完約 ${Math.round(100 * t.wins / t.n)}%）` : `照這樣打，你先出完的機率約 ${Math.round(100 * t.wins / t.n)}%`; }
+  else if (r.stats && r.stats.length) { const t = r.stats[0]; line = (r.ev ? `照這樣打，平均每局 <b>${fmtPts(t.pts)} 分</b>（先出完約 ${pct(t)}）` : `照這樣打，先出完約 <b>${pct(t)}</b>（平均每局 ${fmtPts(t.pts)} 分）`) + `<br><span class="sub">模擬 ${t.n} 局</span>`; }
   const warn = [];
   if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}沒有逐張讀，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
   if (r.risky) warn.push("照你亮著的牌看不出這手一定壓得過；遊戲不讓你出的話，就按 PASS");
-  const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${r.ev ? `${fmtPts(s.pts)} 分・` : ""}${Math.round(100 * s.wins / s.n)}%</span></div>`).join("") : "";
+  const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${r.ev ? `${fmtPts(s.pts)} 分・${pct(s)}` : `${pct(s)}・${fmtPts(s.pts)} 分`}</span></div>`).join("") : "";
   bodyHTML = `<p class="who">${topText(R)}</p>` +
     `<div class="play"><p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
     (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) + `</div>` +
@@ -230,13 +233,32 @@ function adviseSoon() {
     if (live.recKey() !== key) return;
     const a0 = performance.now();
     try {
-      const r = live.advise({ W: B2_MODELS.W, ev: true, nDet: 300 });
+      const r = live.advise({ W: B2_MODELS.W, ev: aim === "pts", adapt: ADAPT });
       if (!r) return;
       renderAdvice(r); shownTurn = live.turnKey(); beep(r.card.type === B.T_PASS);
-      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${Math.round(100 * r.stats[0].wins / r.stats[0].n)}%` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
+      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aim === "win" ? "勝率優先" : "神幣優先"}，${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
     } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
   }, 30);
 }
+
+// ---------- what the advice aims at: points on average, or going out first ----------
+// The plays are simulated until the best one is clearly ahead (each play drops out once it is behind by more than 2.5
+// standard errors on the same deals; at least 200 deals, at most 1500, at most 2 seconds): about as sure as 1500 deals
+// every time, for about 1.5 times the work of the old fixed 300.
+const ADAPT = { z: 2.5, min: 200, max: 1500, batch: 100, budget: 2000 };
+let aim = "pts";
+try { aim = localStorage.getItem("big2-aim") === "win" ? "win" : "pts"; } catch (e) {}
+$("aimIn").value = aim;
+$("aimIn").addEventListener("change", () => {
+  aim = $("aimIn").value === "win" ? "win" : "pts";
+  try { localStorage.setItem("big2-aim", aim); } catch (e) {}
+  log(`建議依據：${aim === "win" ? "勝率優先" : "神幣優先"}`);
+  // the advice on screen, worked out again for the new aim
+  shownTurn = null; swapShown = null;
+  const sw = live.swapInfo();
+  if (sw && sw.phase === "choose") swapAdviseSoon();
+  else if (live.S.round) adviseSoon();
+});
 
 // ---------- 換牌局: which cards to swap at the start of each deal ----------
 let swapMode = false;
@@ -262,21 +284,23 @@ function swapAdviseSoon() {
     const w2 = live.swapInfo();
     if (!w2 || w2.phase !== "choose" || w2.hand0.join(",") !== key) return;
     try {
-      const r = B2Swap.advise(w2.hand0, { W: B2_MODELS.W, budget: 3000 });
+      const r = B2Swap.advise(w2.hand0, { W: B2_MODELS.W, budget: 3000, aim });
       if (!r) return;
       live.setSwapAdvice(w2.hand0, r.best.gave);
       swapShown = key; renderSwap(r, w2.hand0); beep(!r.best.gave.length);
-      log(`換牌建議 ${r.best.gave.length ? comboText(r.best.gave) : "不換"}（${fmtPts(r.best.pts)} 分，不換 ${fmtPts(r.none.pts)}，${r.best.n} 局）｜其他 ${r.list.slice(1, 3).map((x) => `${x.gave.length ? comboText(x.gave) : "不換"} ${fmtPts(x.pts)}`).join("、")}｜${r.ms}ms`);
+      log(`換牌建議 ${r.best.gave.length ? comboText(r.best.gave) : "不換"}（${aim === "win" ? "勝率優先" : "神幣優先"}，${fmtPts(r.best.pts)} 分 ${pct(r.best)}，不換 ${fmtPts(r.none.pts)} 分 ${pct(r.none)}，${r.best.n} 局）｜其他 ${r.list.slice(1, 3).map((x) => `${x.gave.length ? comboText(x.gave) : "不換"} ${fmtPts(x.pts)} ${pct(x)}`).join("、")}｜${r.ms}ms`);
     } catch (e) { log("換牌建議出錯：" + (e.message || e)); }
   }, 30);
 }
 function renderSwap(r, hand0) {
   const b = r.best, give = new Set(b.gave);
-  const alts = r.list.slice(1).filter((x) => x.n === b.n).slice(0, 3).map((x) => `<div class="alt"><span>${x.gave.length ? `<b>${esc(comboText(x.gave))}</b>` : "不換"}</span><span>${fmtPts(x.pts)} 分</span></div>`).join("");
+  const alts = r.list.slice(1).filter((x) => x.n === b.n).slice(0, 3).map((x) => `<div class="alt"><span>${x.gave.length ? `<b>${esc(comboText(x.gave))}</b>` : "不換"}</span><span>${aim === "win" ? `${pct(x)}・${fmtPts(x.pts)} 分` : `${fmtPts(x.pts)} 分・${pct(x)}`}</span></div>`).join("");
   bodyHTML = `<p class="who">換牌局：開始前可以換 0～3 張</p>` +
     `<div class="play"><p class="verb${b.gave.length ? "" : " pass"}">${b.gave.length ? `換 ${b.gave.length} 張` : "不換"}</p>` +
     (b.gave.length ? `<div class="row">${sortIds(b.gave).map((x) => pc(x, "big")).join("")}</div>` : "") + `</div>` +
-    `<p class="note">${b.gave.length ? `照這樣換，平均每局 <b>${fmtPts(b.pts)} 分</b>（不換 ${fmtPts(r.none.pts)} 分）` : `不換最好，平均每局 <b>${fmtPts(b.pts)} 分</b>`}</p>` +
+    `<p class="note">${aim === "win"
+      ? (b.gave.length ? `照這樣換，先出完約 <b>${pct(b)}</b>（不換 ${pct(r.none)}）` : `不換最好，先出完約 <b>${pct(b)}</b>`)
+      : (b.gave.length ? `照這樣換，平均每局 <b>${fmtPts(b.pts)} 分</b>（不換 ${fmtPts(r.none.pts)} 分）` : `不換最好，平均每局 <b>${fmtPts(b.pts)} 分</b>`)}<br><span class="sub">模擬 ${b.n} 局</span></p>` +
     `<div class="row" aria-label="你的手牌">${sortIds(hand0).map((x) => pc(x, give.has(x) ? "on" : "")).join("")}</div>` +
     (alts ? `<div class="alts"><span>其他換法</span>${alts}</div>` : "");
   setState("換牌中", "turn"); old = false; hasAdvice = true; shownTurn = null; paint();

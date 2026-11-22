@@ -469,30 +469,52 @@
     }
     const U = unseenOf(g.hand[p], g.played);
     const cnt = g.hand.map(count);
-    const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0);
+    const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0), n = new Array(C.length).fill(0), alive = C.map(() => true);
     const pols = [0, 1, 2, 3].map((q) => (q === p ? rp : { type: P_SMART }));
     const rnd = rng32(pol.seed >>> 0);
     const unseen = toIds(U);
-    for (let d = 0; d < pol.nDet; d++) {
+    // pol.adapt { z, min, max, batch, budget }: deals in batches; from `min` deals on, a play falls out once it is behind
+    // the leader by more than z standard errors of the difference on the same deals; stop when one is left, at `max`
+    // deals, or after `budget` ms. Else exactly pol.nDet deals for every play.
+    const A = pol.adapt, nMax = A ? A.max : pol.nDet;
+    const V = A ? C.map(() => new Float32Array(nMax)) : null;
+    const mean = (i) => (pol.ev ? pts[i] : wins[i]) / Math.max(1, n[i]);
+    const t0 = Date.now();
+    for (let d = 0; d < nMax; d++) {
       const deck = unseen.slice();
       for (let i = deck.length - 1; i > 0; i--) { const j = rnd.below(i + 1); const t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
       const base = copyGame(g);
       let k = 0;
       for (let q = 0; q < 4; q++) if (q !== p) { const h = empty(); for (let i = 0; i < cnt[q]; i++) { const c = deck[k++]; h[c >> 2] |= 1 << (c & 3); } base.hand[q] = h; }
       for (let i = 0; i < C.length; i++) {
+        if (!alive[i]) continue;
         const x = copyGame(base);
         applyMove(x, C[i]);
         playOut(x, pols);
-        if (x.winner === p) wins[i] += 1;
-        if (pol.ev) pts[i] += pointsFor(x, p);
+        const w = x.winner === p ? 1 : 0, s = pointsFor(x, p);
+        wins[i] += w; pts[i] += s;
+        if (V) V[i][n[i]] = pol.ev ? s : w;
+        n[i]++;
+      }
+      if (A && (d + 1) % A.batch === 0 && d + 1 >= A.min) {
+        let b = -1;
+        for (let i = 0; i < C.length; i++) if (alive[i] && (b < 0 || mean(i) > mean(b))) b = i;
+        for (let i = 0; i < C.length; i++) {
+          if (!alive[i] || i === b) continue;
+          const m = n[i];   // (both still in: played on the same deals)
+          let s1 = 0, s2 = 0;
+          for (let j = 0; j < m; j++) { const dd = V[b][j] - V[i][j]; s1 += dd; s2 += dd * dd; }
+          const md = s1 / m, se = Math.sqrt(Math.max(1e-12, s2 / m - md * md) / m);
+          if (md > A.z * se) alive[i] = false;
+        }
+        if (alive.filter(Boolean).length === 1 || Date.now() - t0 > A.budget) break;
       }
     }
     // the aim: how often you go out first, or (pol.ev) the points you win or lose on average
-    const val = pol.ev ? pts : wins;
-    let bi = 0;
-    for (let i = 1; i < C.length; i++) if (val[i] > val[bi]) bi = i;
-    for (let i = 0; i < C.length; i++) if (val[i] === val[bi] && sameCombo(C[i], pref)) { bi = i; break; }
-    return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], pts: pts[i] / pol.nDet, n: pol.nDet })), pref };
+    let bi = -1;
+    for (let i = 0; i < C.length; i++) if (alive[i] && (bi < 0 || mean(i) > mean(bi))) bi = i;
+    for (let i = 0; i < C.length; i++) if (alive[i] && mean(i) === mean(bi) && sameCombo(C[i], pref)) { bi = i; break; }
+    return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], pts: pts[i] / Math.max(1, n[i]), n: n[i], out: !alive[i] })), pref, ms: Date.now() - t0, deals: Math.max(...n) };
   }
 
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,

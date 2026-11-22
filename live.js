@@ -343,9 +343,11 @@
       if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
       const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
       const ev = opts.ev !== false;
-      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev });
-      const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (ev ? b.pts - a.pts : b.wins - a.wins));
-      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, risky: risky && r.card.type !== B.T_PASS };
+      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev });
+      // the play chosen first, then the others by the aim (each over the deals it was played on)
+      const val = (x) => (ev ? x.pts : x.wins / x.n);
+      const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (a.card === r.card ? -1 : b.card === r.card ? 1 : val(b) - val(a)));
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
