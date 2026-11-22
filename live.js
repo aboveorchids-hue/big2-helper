@@ -44,7 +44,7 @@
   const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], disp: [null, null, null, null], busySince: 0, odd: null };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], disp: [null, null, null, null], busySince: 0, odd: null };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -68,12 +68,32 @@
     function noteSingle(r, now) {
       const p = r && r.pile, c = p && p.n === 1 && p.sure && p.cards && p.cards.length === 1 ? p.cards[0] : null;
       if (c == null || L.seen.some((x) => x.card === c) || mine().has(c)) return;
-      L.seen.push({ card: c, at: now, used: false });
+      L.seen.push({ card: c, at: now, used: false, show: L.shows.some((x) => x.cards.includes(c)) });
       if (!L.S.played.includes(c)) L.S.played.push(c);
+      match();
+    }
+    // plays shown large at a seat: who played which cards (each is seen in a reading or two; kept once)
+    function noteShows(r, now) {
+      const my = mine();
+      for (const sh of (r && r.shows) || []) {
+        if (!sh.sure || !ST.classify(sh.cards) || sh.cards.some((c) => my.has(c))) continue;
+        const key = sh.seat + ":" + sh.cards.slice().sort((a, b) => a - b).join(",");
+        if (L.shows.some((x) => x.key === key)) continue;
+        L.shows.push({ key, seat: sh.seat, cards: sh.cards.slice(), at: now, used: false });
+        for (const c of sh.cards) if (!L.S.played.includes(c)) L.S.played.push(c);
+        // a single seen on the table too is the same card
+        for (const x of L.seen) if (sh.cards.includes(x.card)) x.show = true;
+      }
       match();
     }
     function match() {
       const S = L.S, my = mine();
+      // first the plays shown large: a count going down by as many cards at the same seat, close in time
+      for (const e of S.events) {
+        if (e.k !== "count" || e.c || e.t == null) continue;
+        const x = L.shows.find((y) => !y.used && y.seat === e.s && y.cards.length === e.n && y.at >= e.t - MATCH_BEFORE && y.at <= e.t + MATCH_AFTER);
+        if (x) { e.c = x.cards.slice(); x.used = true; for (const c of x.cards) { const y = L.seen.find((z) => z.card === c); if (y) y.used = true; } }
+      }
       for (const x of L.seen) if (my.has(x.card)) x.used = true;
       let cycle = 0, last = -Infinity;
       const drops = [];
@@ -83,7 +103,7 @@
       }
       drops.sort((a, b) => a.e.t - b.e.t || a.cycle - b.cycle || a.e.s - b.e.s);
       for (const d of drops) {
-        const x = L.seen.find((y) => !y.used && y.at >= last && y.at >= d.e.t - MATCH_BEFORE && y.at <= d.e.t + MATCH_AFTER);
+        const x = L.seen.find((y) => !y.used && !y.show && y.at >= last && y.at >= d.e.t - MATCH_BEFORE && y.at <= d.e.t + MATCH_AFTER);
         if (!x) continue;
         d.e.c = [x.card]; x.used = true; last = x.at;
         if (!S.played.includes(x.card)) S.played.push(x.card);
@@ -94,6 +114,7 @@
     function process(r, now) {
       now = now == null ? Date.now() : now;
       noteDisplays(r, now);
+      noteShows(r, now);
       noteSingle(r, now);
       let o = ST.observe(r);
       // your row found but some of its cards hidden (say, by the game's message over it) while it still has as many cards
@@ -127,15 +148,18 @@
       const deal0 = L.S.deal;
       const newest = L.seen.length ? L.seen[L.seen.length - 1] : null;
       const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
-      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent });
+      const lastShow = L.shows.length ? L.shows[L.shows.length - 1] : null;
+      const show = lastShow && !lastShow.used && now - lastShow.at < MATCH_BEFORE ? { seat: lastShow.seat, cards: lastShow.cards } : null;
+      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent, show });
       if (out.err) return { status: "err", why: out.err };
       const S = out.S;
       // a display that was used up (that seat's count went down) is forgotten
       for (const e of S.events) if (e.at === S.shots && e.k === "count") { L.disp[e.s] = null; if (e.t == null) e.t = now; }
       L.S = S; L.lastO = o;
-      if (S.deal !== deal0) L.seen = [];
+      if (S.deal !== deal0) { L.seen = []; L.shows = []; }
       // the singles seen so far are played cards; match them to the plays
       for (const x of L.seen) if (!S.played.includes(x.card) && !(S.my || []).includes(x.card)) S.played.push(x.card);
+      for (const x of L.shows) for (const c of x.cards) if (!S.played.includes(c) && !(S.my || []).includes(c)) S.played.push(c);
       match();
       return { status: "applied", turn: !!S.round, notes: out.notes };
     }
@@ -174,7 +198,7 @@
       return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, risky: risky && r.card.type !== B.T_PASS };
     }
 
-    function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
+    function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
     function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
     return { process, advise, reset, restore, recKey, get S() { return L.S; } };
   }

@@ -296,7 +296,10 @@
         }
         const inf = infs[n];
         top = { s: owner, n, c: null, read: null };
-        if (pileCard != null && n === 1) {
+        // live: the play as read where it was shown large (or matched to its owner's count before)
+        const shown = LV && LV.owner === owner && LV.c && LV.c.length === n ? LV.c : opts.show && opts.show.seat === owner && opts.show.cards.length === n ? opts.show.cards : null;
+        if (shown && classify(shown)) top.c = shown.slice();
+        else if (pileCard != null && n === 1) {
           const t = { type: B.T_SINGLE, key: pileCard };
           const fits = inf.list.some((x) => sameTop(x, t));
           if ((pileSure && (fits || !inf.list.length)) || (!pileSure && fits && inf.list.length <= 8)) { top.c = [pileCard]; top.unsure = !pileSure; }
