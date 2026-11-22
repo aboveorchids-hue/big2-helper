@@ -174,6 +174,16 @@
     return 1;
   }
 
+  // your points at the end of a hand: the winner takes each loser's points times the winner's last-play multiplier, less
+  // the house's 15 %; a loser pays their own
+  const RAKE = 0.85;
+  function pointsFor(g, p) {
+    if (g.winner < 0) return 0;
+    const m = winnerMult(g.finalPlay);
+    if (g.winner === p) { let s = 0; for (let q = 0; q < 4; q++) if (q !== p) s += loserPoints(g.hand[q]); return RAKE * s * m; }
+    return -loserPoints(g.hand[p]) * m;
+  }
+
   // ---- rank-level hand splitting ----
   const countsOf = (H) => H.map((m) => PC4[m]);
   function psSteps(c) { let s = 0; for (let r = 0; r < 13; r++) s += (c[r] >> 1) + (c[r] & 1); return s; }
@@ -459,7 +469,7 @@
     }
     const U = unseenOf(g.hand[p], g.played);
     const cnt = g.hand.map(count);
-    const wins = new Array(C.length).fill(0);
+    const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0);
     const pols = [0, 1, 2, 3].map((q) => (q === p ? rp : { type: P_SMART }));
     const rnd = rng32(pol.seed >>> 0);
     const unseen = toIds(U);
@@ -474,17 +484,20 @@
         applyMove(x, C[i]);
         playOut(x, pols);
         if (x.winner === p) wins[i] += 1;
+        if (pol.ev) pts[i] += pointsFor(x, p);
       }
     }
+    // the aim: how often you go out first, or (pol.ev) the points you win or lose on average
+    const val = pol.ev ? pts : wins;
     let bi = 0;
-    for (let i = 1; i < C.length; i++) if (wins[i] > wins[bi]) bi = i;
-    for (let i = 0; i < C.length; i++) if (wins[i] === wins[bi] && sameCombo(C[i], pref)) { bi = i; break; }
-    return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], n: pol.nDet })), pref };
+    for (let i = 1; i < C.length; i++) if (val[i] > val[bi]) bi = i;
+    for (let i = 0; i < C.length; i++) if (val[i] === val[bi] && sameCombo(C[i], pref)) { bi = i; break; }
+    return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], pts: pts[i] / pol.nDet, n: pol.nDet })), pref };
   }
 
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
-    genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, splitHand, splitPieces, beatableBy,
+    genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
     chooseSmart, chooseS, choosePIMC, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

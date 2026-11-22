@@ -207,12 +207,15 @@
       if (!g || !R) return null;
       const { L: Lg, byLit, risky } = legal(g, R, S.view && S.view.lit);
       if (!Lg.length) return { kind: "none", card: B.PASS(), g, byLit };
-      for (const c of Lg) if (B.isEmpty(B.minus(g.hand[0], c.set))) return { kind: "finish", card: c, g, risky };
+      // going out now: with the play that doubles the others' payment if there is one
+      const outs = Lg.filter((c) => B.isEmpty(B.minus(g.hand[0], c.set)));
+      if (outs.length) return { kind: "finish", card: outs.reduce((a, b) => (B.winnerMult(b) > B.winnerMult(a) ? b : a)), g, risky };
       if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
       const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
-      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: hash(recKey()) });
-      const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => b.wins - a.wins);
-      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, risky: risky && r.card.type !== B.T_PASS };
+      const ev = opts.ev !== false;
+      const r = B.choosePIMC(g, 0, Lg, { type: B.P_PIMC, nDet: opts.nDet || 200, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: hash(recKey()), ev });
+      const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (ev ? b.pts - a.pts : b.wins - a.wins));
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, risky: risky && r.card.type !== B.T_PASS };
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
