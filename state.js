@@ -235,7 +235,9 @@
     const drop = [0, 0, 0, 0];
     for (let q = 1; q <= 3; q++) {
       let c = o.counts[q];
-      if (c == null && o.craw[q] != null && o.cp[q] >= 0.55 && o.craw[q] <= S.counts[q]) { c = o.craw[q]; o.counts[q] = c; }
+      if (!opts.live && c == null && o.craw[q] != null && o.cp[q] >= 0.55 && o.craw[q] <= S.counts[q]) { c = o.craw[q]; o.counts[q] = c; }
+      // live: a count never goes up during a hand, so a higher one is a misreading (something lying over the badge)
+      if (c != null && opts.live && !fresh && c > S.counts[q]) c = null;
       if (c == null) { S.fresh[q] = false; continue; }
       if (!fresh && c < S.counts[q]) { drop[q] = S.counts[q] - c; ev(S, { k: "count", s: q, n: drop[q] }); }
       S.counts[q] = c; S.fresh[q] = true; S.est[q] = false; S.countAt[q] = S.shots;
@@ -265,6 +267,8 @@
     const dispCard = owner != null && opts.disp && opts.disp[owner] != null ? opts.disp[owner] : null;
     if ((pileCard == null || !pileSure) && dispCard != null && !hand.includes(dispCard) && (owner == null || [0, 1].includes(drop[owner]) || (LV && LV.n === 1))) { pileCard = dispCard; pileSure = true; }
     if (LV && LV.c && LV.c.length === 1 && (pileCard == null || !pileSure)) { pileCard = LV.c[0]; pileSure = true; }
+    // live: the newest single seen surely on the table and not yet matched to an earlier play
+    if (o.myTurn && opts.recent != null && (pileCard == null || !pileSure) && !hand.includes(opts.recent)) { pileCard = opts.recent; pileSure = true; }
     // 5. your turn: the round as it stands
     S.round = null;
     const view = { myTurn: o.myTurn, buttons, pass: o.pass.slice(), pile: o.pile, owner: null, lit: o.lit.slice() };
@@ -310,7 +314,7 @@
           }
           else top.eff = n === 1 ? { type: B.T_SINGLE, key: 0 } : n === 2 ? { type: B.T_PAIR, key: 1 } : { type: B.T_STRAIGHT, key: 0 };
         } else {
-          for (const c of top.c) if (!S.played.includes(c)) S.played.push(c);
+          if (!(opts.live && top.unsure)) for (const c of top.c) if (!S.played.includes(c)) S.played.push(c);
           if (!top.unsure) for (let i = S.events.length - 1; i >= 0; i--) { const e = S.events[i]; if (e.k === "count" && e.s === owner) { if (!e.c && e.n === top.c.length) e.c = top.c.slice(); break; } }
         }
         // its owner's count hidden under the play just shown large: the count read before, less this play (not when the
@@ -326,19 +330,13 @@
       S.round = { lead, first, top, passed: [...passed].sort(), at: S.shots, live: LV ? (LV.lead ? "lead" : "top") : null };
       view.owner = lead ? null : owner;
       ev(S, { k: "turn", lead, top: top ? { s: top.s, n: top.n, c: top.c } : null });
-    } else if (owner != null && pileCard != null && pileSure && drop[owner] === 1) {
+    } else if (!opts.live && owner != null && pileCard != null && pileSure && drop[owner] === 1) {
       // someone else's single, read off the table (or off the large display just before it landed)
       if (!S.played.includes(pileCard) && !hand.includes(pileCard)) S.played.push(pileCard);
       for (let i = S.events.length - 1; i >= 0; i--) { const e = S.events[i]; if (e.k === "count" && e.s === owner && e.at === S.shots) { e.c = [pileCard]; break; } }
       view.owner = owner;
     }
-    else if (opts.live && !o.myTurn && pileCard != null && pileSure && !S.played.includes(pileCard) && !hand.includes(pileCard)) {
-      // live: a single read surely only now (it was not clear when its owner's count went down)
-      let k = S.events.length - 1;
-      for (; k >= 0; k--) if (S.events[k].k === "play" || S.events[k].k === "count") break;
-      const e = k >= 0 ? S.events[k] : null;
-      if (e && e.k === "count" && e.n === 1 && !e.c) { e.c = [pileCard]; S.played.push(pileCard); view.owner = e.s; }
-    }
+    // (live: the singles seen on the table are matched to the plays by the live reader, in the order both came)
     // pass signs that appeared since the last screenshot
     const prev = S0.view && S0.deal === S.deal ? S0.view.pass : [false, false, false, false];
     for (let q = 1; q <= 3; q++) if (o.pass[q] && !prev[q]) ev(S, { k: "pass", s: q });

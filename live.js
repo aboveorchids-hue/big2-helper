@@ -10,7 +10,7 @@
   const DISP_MS = 9000;          // a single read off the large display counts for this long
   const BUSY_MS = 4000;          // the table counts as moving for at most this long (then it is read anyway)
   const ODD_N = 4;               // a hand that does not fit the one before is taken after this many readings agree on it
-  const WAIT_N = 3;              // at your turn, readings to wait for every count to be read
+  const WAIT_N = 2;              // at your turn, readings to wait for every count to be read
 
   const sameList = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
   // two readings of the same moment of the game (a count not read, or a single on the table not read surely, in one of
@@ -40,10 +40,11 @@
     if (a.pile.sure && a.pile.card !== (b.pile.sure ? b.pile.card : null)) return true;
     return false;
   }
-  const busyOf = (r) => !!(r && r.pile && (r.pile.busy || (r.pile.displays && r.pile.displays.length)));
+  // the table is moving: a play shown large with nothing readable on the pile yet
+  const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, disp: [null, null, null, null], busySince: 0, odd: null };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], disp: [null, null, null, null], busySince: 0, odd: null };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -58,11 +59,50 @@
       return o;
     }
 
+    // ---------- singles on the table ----------
+    // A single read surely on the table is a played card, whatever else is still moving (a new card often shows clearly
+    // for only a moment before the next one covers it). It is matched to a play of one card seen as a count going down,
+    // in the order both came and close in time (the count can be hidden for a moment by the card shown large).
+    const MATCH_BEFORE = 6000, MATCH_AFTER = 3000;
+    const mine = () => { const m = new Set(L.S.my || []); for (const e of L.S.events) if (e.k === "play") for (const c of e.c) m.add(c); return m; };
+    function noteSingle(r, now) {
+      const p = r && r.pile, c = p && p.n === 1 && p.sure && p.cards && p.cards.length === 1 ? p.cards[0] : null;
+      if (c == null || L.seen.some((x) => x.card === c) || mine().has(c)) return;
+      L.seen.push({ card: c, at: now, used: false });
+      if (!L.S.played.includes(c)) L.S.played.push(c);
+      match();
+    }
+    function match() {
+      const S = L.S, my = mine();
+      for (const x of L.seen) if (my.has(x.card)) x.used = true;
+      let cycle = 0, last = -Infinity;
+      const drops = [];
+      for (const e of S.events) {
+        if (e.k === "turn" || e.k === "play") cycle++;
+        if (e.k === "count" && e.n === 1) { if (e.c) { const x = L.seen.find((y) => y.card === e.c[0]); if (x && x.at > last) last = x.at; } else if (e.t != null) drops.push({ e, cycle }); }
+      }
+      drops.sort((a, b) => a.e.t - b.e.t || a.cycle - b.cycle || a.e.s - b.e.s);
+      for (const d of drops) {
+        const x = L.seen.find((y) => !y.used && y.at >= last && y.at >= d.e.t - MATCH_BEFORE && y.at <= d.e.t + MATCH_AFTER);
+        if (!x) continue;
+        d.e.c = [x.card]; x.used = true; last = x.at;
+        if (!S.played.includes(x.card)) S.played.push(x.card);
+      }
+    }
+
     // one reading; returns { status, why?, turn?, notes? }. status: applied | same | settling | busy | unread | odd | err
     function process(r, now) {
       now = now == null ? Date.now() : now;
       noteDisplays(r, now);
-      const o = ST.observe(r);
+      noteSingle(r, now);
+      let o = ST.observe(r);
+      // your row found but some of its cards hidden (say, by the game's message over it) while it still has as many cards
+      // as you had: the cards you had
+      if (!o.ok && r && r.hand && r.hand.cards && !r.raised && L.S.my && r.hand.n === L.S.my.length && r.hand.geoOk) {
+        const h = r.hand, r2 = Object.assign({}, r, { hand: Object.assign({}, h, { cards: L.S.my.slice(), sure: L.S.my.map(() => true), lit: h.lit && h.lit.length === L.S.my.length ? h.lit : L.S.my.map(() => true) }) });
+        const o2 = ST.observe(r2);
+        if (o2.ok) { r = r2; o = o2; }
+      }
       if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised) }; }
       if (busyOf(r)) {
         if (!L.busySince) L.busySince = now;
@@ -73,8 +113,8 @@
       L.ring.push(o); if (L.ring.length > 4) L.ring.shift();
       if (!stable) return { status: "settling" };
       if (!news(o, L.lastO)) return { status: "same", turn: !!L.S.round };
-      // your turn with someone's count not read (and no PASS sign over it): wait a few readings for it, since it says who
-      // played last
+      // your turn with someone's count not read (and no PASS sign over it): wait a reading or two for it, since it says
+      // who played last
       if (o.myTurn && [1, 2, 3].some((q) => o.counts[q] == null && !o.pass[q]) && ++L.waitCount < WAIT_N) return { status: "settling", why: "等看清楚各家張數" };
       L.waitCount = 0;
       // a hand that does not fit the cards you had: a misreading, unless it keeps coming back (a new hand of 13 is fine)
@@ -84,12 +124,19 @@
         if (L.odd.n < ODD_N) return { status: "odd", why: "手牌和之前的對不起來" };
       }
       L.odd = null;
-      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now) });
+      const deal0 = L.S.deal;
+      const newest = L.seen.length ? L.seen[L.seen.length - 1] : null;
+      const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
+      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent });
       if (out.err) return { status: "err", why: out.err };
       const S = out.S;
       // a display that was used up (that seat's count went down) is forgotten
-      for (const e of S.events) if (e.at === S.shots && e.k === "count") L.disp[e.s] = null;
+      for (const e of S.events) if (e.at === S.shots && e.k === "count") { L.disp[e.s] = null; if (e.t == null) e.t = now; }
       L.S = S; L.lastO = o;
+      if (S.deal !== deal0) L.seen = [];
+      // the singles seen so far are played cards; match them to the plays
+      for (const x of L.seen) if (!S.played.includes(x.card) && !(S.my || []).includes(x.card)) S.played.push(x.card);
+      match();
       return { status: "applied", turn: !!S.round, notes: out.notes };
     }
 
@@ -127,7 +174,7 @@
       return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, risky: risky && r.card.type !== B.T_PASS };
     }
 
-    function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
+    function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
     function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
     return { process, advise, reset, restore, recKey, get S() { return L.S; } };
   }

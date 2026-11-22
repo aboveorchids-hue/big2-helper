@@ -965,7 +965,8 @@ const B2Read = (() => {
 
   // ---------- how many cards each of the others holds: the round badge at the head of their face-down fan ----------
   // navy with white digits (7 to 13), crimson with yellow digits (6 or fewer); both have a light ring around a dark disc
-  const SEATBOX = { right: [640, 250, 100, 100], top: [375, 232, 125, 66], left: [195, 250, 90, 100] };   // [X0, Y0, w, h]
+  // (the badge sits at the head of the fan and moves along it as the fan shrinks: high up with 13 cards, lower with few)
+  const SEATBOX = { right: [628, 222, 124, 132], top: [358, 205, 168, 82], left: [178, 222, 124, 132] };   // [X0, Y0, w, h]
   const RING = [], INNER = [[0, 0]];
   for (let a = 0; a < 16; a++) RING.push([Math.cos(a * Math.PI / 8), Math.sin(a * Math.PI / 8)]);
   for (let a = 0; a < 4; a++) INNER.push([4.5 * Math.cos(a * Math.PI / 2 + 0.4), 4.5 * Math.sin(a * Math.PI / 2 + 0.4)]);
@@ -973,23 +974,33 @@ const B2Read = (() => {
   const BP = 30;   // badge patch size
   function findBadge(img, F, box) {
     const [X0, Y0, w, h] = box, P = grab(img, F, X0, Y0, w, h), L = lumOf(P, w * h);
-    let best = null; const tmp = new Float32Array(INNER.length);
-    for (let y = 17; y < h - 17; y++) for (let x = 17; x < w - 17; x++) {
+    const tmp = new Float32Array(INNER.length);
+    // a dark disc in a light ring around (x, y): its score, or null
+    const at = (x, y) => {
       const ci = y * w + x;
-      if (L[ci] > 170) continue;
-      for (let k = 0; k < INNER.length; k++) tmp[k] = L[Math.round(y + INNER[k][1]) * w + Math.round(x + INNER[k][0])];
-      const srt = Array.from(tmp).sort((a, b) => a - b), fill = srt[3];
-      if (fill > 115) continue;
+      if (L[ci] > 170) return null;
+      // the fill: the 4th darkest of the inner samples (a few digit pixels among them do not matter)
+      let n = 0;
+      for (let k = 0; k < INNER.length; k++) {
+        const v = L[Math.round(y + INNER[k][1]) * w + Math.round(x + INNER[k][0])];
+        let j = n < 4 ? n++ : 4;
+        if (j === 4 && v >= tmp[3]) continue;
+        while (j > 0 && tmp[j - 1] > v) { if (j < 4) tmp[j] = tmp[j - 1]; j--; }
+        tmp[j] = v;
+      }
+      const fill = tmp[3];
+      if (fill > 115) return null;
       let rbest = -1, rmin = 0;
       for (const rad of [13.5, 14.5, 15.5]) {
         let s = 0, mn = 999;
         for (const [cx, cy] of RING) { const v = L[Math.round(y + rad * cy) * w + Math.round(x + rad * cx)]; s += v; if (v < mn) mn = v; }
         if (s / 16 > rbest) { rbest = s / 16; rmin = mn; }
       }
-      if (rbest - fill < 55 || rmin < fill + 20) continue;
-      const sc = rbest - fill + 0.5 * (rmin - fill);
-      if (!best || sc > best.sc) best = { x, y, sc, fill, ring: rbest };
-    }
+      if (rbest - fill < 55 || rmin < fill + 20) return null;
+      return { x, y, sc: rbest - fill + 0.5 * (rmin - fill), fill, ring: rbest };
+    };
+    let best = null;
+    for (let y = 17; y < h - 17; y++) for (let x = 17; x < w - 17; x++) { const v = at(x, y); if (v && (!best || v.sc > best.sc)) best = v; }
     if (!best) return null;
     // the digits: brightness between the disc's fill and its ring, inside the disc; and the fill's colour
     const d = new Float32Array(BP * BP), span = Math.max(40, best.ring - best.fill);
@@ -1017,24 +1028,34 @@ const B2Read = (() => {
   }
 
   // ---------- PASS: the golden word over a seat ----------
-  const PASSBOX = { right: [585, 250, 190, 90], top: [375, 190, 190, 80], left: [170, 250, 190, 90] };
+  // (taller than the word: in a taller game window the table sits higher, the word with it)
+  const PASSBOX = { right: [570, 212, 220, 128], top: [360, 160, 220, 110], left: [150, 212, 220, 128] };
   const golden = (r, g, bl) => r > 200 && g > 150 && bl < 160 && r - bl > 70;
+  // the PASS word runs from pale yellow at the top to orange at the bottom; on some screens the pale half is paler still
+  const passGold = (r, g, bl) => r > 200 && g > 150 && bl < 215 && r - bl > 40 && g - bl > 30;
   function findPass(img, F, box, T) {
     const [X0, Y0, w, h] = box, P = grab(img, F, X0, Y0, w, h), m = new Uint8Array(w * h);
     let cnt = 0, x0 = w, x1 = -1, y0 = h, y1 = -1;
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 3; if (golden(P[i], P[i + 1], P[i + 2])) { m[y * w + x] = 1; cnt++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 3; if (passGold(P[i], P[i + 1], P[i + 2])) { m[y * w + x] = 1; cnt++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
     if (cnt < 700) return { pass: false, gold: cnt, score: 0 };
-    // the word's shape at a third of the size, slid over the box (other golden things nearby move a box-centred guess)
-    const w3 = Math.floor(w / 3), h3 = Math.floor(h / 3), d3 = new Float32Array(w3 * h3);
-    for (let y = 0; y < h3; y++) for (let x = 0; x < w3; x++) { let s = 0; for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) s += m[(y * 3 + dy) * w + x * 3 + dx]; d3[y * w3 + x] = s / 9; }
+    // the word's shape at a third of the size, slid over the box (other golden things nearby move a box-centred guess);
+    // also a little larger, as the sign is while it pops up and on the right-hand seat
     const a = new Float32Array(T.w * T.h);
     let score = -1;
-    for (let oy = 0; oy + T.h <= h3; oy++) for (let ox = 0; ox + T.w <= w3; ox++) {
-      let sum = 0;
-      for (let ty = 0; ty < T.h; ty++) for (let tx = 0; tx < T.w; tx++) { const v = d3[(oy + ty) * w3 + ox + tx]; a[ty * T.w + tx] = v; sum += v; }
-      if (sum < 0.4 * 700 / 9) continue;
-      const sc = K.ncc(a, T.t, T.w, T.h, 0);
-      if (sc > score) score = sc;
+    for (const c of [3, 2.6]) {
+      const w3 = Math.floor(w / c), h3 = Math.floor(h / c), d3 = new Float32Array(w3 * h3);
+      for (let y = 0; y < h3; y++) for (let x = 0; x < w3; x++) {
+        let s = 0;
+        for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) { const yy = Math.min(h - 1, Math.floor((y + (dy + 0.5) / 3) * c)), xx = Math.min(w - 1, Math.floor((x + (dx + 0.5) / 3) * c)); s += m[yy * w + xx]; }
+        d3[y * w3 + x] = s / 9;
+      }
+      for (let oy = 0; oy + T.h <= h3; oy++) for (let ox = 0; ox + T.w <= w3; ox++) {
+        let sum = 0;
+        for (let ty = 0; ty < T.h; ty++) for (let tx = 0; tx < T.w; tx++) { const v = d3[(oy + ty) * w3 + ox + tx]; a[ty * T.w + tx] = v; sum += v; }
+        if (sum < 0.4 * 700 / 9) continue;
+        const sc = K.ncc(a, T.t, T.w, T.h, 0);
+        if (sc > score) score = sc;
+      }
     }
     return { pass: score >= 0.6, gold: cnt, score };
   }

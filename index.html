@@ -29,15 +29,18 @@ body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 h1 { margin: 0; font-size: 20px; }
 .ver { color: var(--muted); font-size: 12px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; min-width: 0; }
-.advice { min-height: 160px; transition: opacity .2s; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; min-width: 0; }
+.advice { min-height: 120px; transition: opacity .2s; }
 .advice.old .body { opacity: .45; }
 .state { display: inline-block; font-size: 13px; font-weight: 700; border-radius: 999px; padding: 2px 10px; background: var(--raise); color: var(--muted); }
 .state.turn { background: var(--accent); color: var(--accent-ink); }
 .state.bad { background: var(--bad); color: #fff; }
-.who { font-size: 15px; color: var(--muted); margin: 10px 0 0; }
+.who { font-size: 15px; color: var(--muted); margin: 8px 0 0; }
 .who b { color: var(--ink); }
-.verb { margin: 2px 0 6px; font-size: 34px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.verb { margin: 2px 0 6px; font-size: 30px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.play { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 4px; }
+.play .verb { margin: 0; }
+.play .row { margin-top: 0; }
 .verb.pass { color: var(--warn-ink); }
 .verb.wait { font-size: 20px; color: var(--muted); font-weight: 700; }
 .sub { font-size: 14px; color: var(--muted); margin: 0; }
@@ -105,15 +108,15 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b1"></script>
-<script src="read.js?v=b1"></script>
-<script src="engine.js?v=b1"></script>
-<script src="state.js?v=b1"></script>
-<script src="live.js?v=b1"></script>
+<script src="models.js?v=b2"></script>
+<script src="read.js?v=b2"></script>
+<script src="engine.js?v=b2"></script>
+<script src="state.js?v=b2"></script>
+<script src="live.js?v=b2"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b1";
+const VERSION = "b2";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -182,8 +185,8 @@ function renderAdvice(r) {
   for (let q = 1; q <= 3; q++) if (!S.fresh[q] && !(S.view && S.view.pass[q])) warn.push(`${SEAT[q]}的張數這次沒看清楚，沿用 ${S.counts[q]} 張`);
   const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${Math.round(100 * s.wins / s.n)}%</span></div>`).join("") : "";
   bodyHTML = `<p class="who">${topText(R)}</p>` +
-    `<p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
-    (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) +
+    `<div class="play"><p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
+    (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) + `</div>` +
     `<p class="note">${line}</p>` + warn.map((w) => `<p class="note warn">${w}</p>`).join("") +
     `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, rec.has(x) ? "on" : "")).join("")}</div>` +
     (alts ? `<div class="alts"><span>其他出法</span>${alts}</div>` : "");
@@ -255,11 +258,11 @@ function onReading(res, from) {
 
 // ---------- reading the screen ----------
 // Pictures come from a background thread reading the stream's frames (MediaStreamTrackProcessor) when this browser has
-// it, else from the <video> element. Once the game window is found, only it is read (at up to 1600 px wide).
+// it, else from the <video> element. Once the game window is found, only it is read (at up to 1300 px wide).
 const supported = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function");
 $("support").textContent = supported ? "這個瀏覽器可以分享螢幕。" : "這個瀏覽器不能分享螢幕（iPad 要 iPadOS 27 的 Safari）。仍然可以選截圖。";
 if (!supported) { $("support").classList.add("no"); $("startBtn").disabled = true; }
-const MAXFULL = 1920, MAXWIN = 1600;
+const MAXFULL = 1920, MAXWIN = 1300;
 const R = { reads: 0, size: "", ms: [], wstate: "沒試", lastBeat: 0, lastN: 0 };
 let stream = null, timer = null, lastFp = null, worker = null, pending = null, wakeLock = null, busy = false, lastRead = 0, wantMore = false;
 let rot = 0, win = null, winMiss = 0, searchMiss = 0, dims = "";
@@ -285,7 +288,7 @@ const WORKER_SRC = `
       const f = r.value; n++;
       const now = performance.now();
       try {
-        if (now - lastFp >= 500) {
+        if (now - lastFp >= 350) {
           lastFp = now;
           gs.drawImage(f, 0, 0, 48, 27);
           const px = gs.getImageData(0, 0, 48, 27).data, fp = new Uint8Array(48 * 27);
@@ -347,7 +350,7 @@ async function start() {
   wake();
   lastFp = null; win = null; winMiss = 0; searchMiss = 0; dims = "";
   $("startBtn").hidden = true; $("stopBtn").hidden = false;
-  timer = setInterval(tick, 600);
+  timer = setInterval(tick, 450);
   if (live.S.round) setState("讀螢幕中"); else showIdle();
 }
 function stop(byTrack) {
@@ -387,7 +390,7 @@ function winFrom(t) {
   const x0 = st.x0 - 0.08 * len, x1 = st.x1 + 0.08 * len, y0 = Math.min(ya, yb) - 0.82 * len, y1 = Math.max(ya, yb) + 0.12 * len;
   return { x0: (t.ox + x0) / t.s, y0: (t.oy + y0) / t.s, x1: (t.ox + x1) / t.s, y1: (t.oy + y1) / t.s, len: len / t.s };
 }
-// just the game window, at up to 1600 px wide
+// just the game window, at up to 1300 px wide
 function readWin(src, W, H, r, w) {
   const s = Math.min(1, MAXWIN / w.len), { cw, ch } = drawRot(src, W, H, s, r);
   const x0 = Math.max(0, Math.floor(w.x0 * s)), y0 = Math.max(0, Math.floor(w.y0 * s));
@@ -439,7 +442,7 @@ function tick() {
     if (pending) { src = pending; pending = null; W = src.width; H = src.height; from = "背景"; }
   } else if (v.videoWidth && v.readyState >= 2) {
     const changed = fpChanged(v);
-    if (changed || wantMore || performance.now() - lastRead > 1500) { src = v; W = v.videoWidth; H = v.videoHeight; from = "影片"; }
+    if (changed || wantMore || performance.now() - lastRead > 1200) { src = v; W = v.videoWidth; H = v.videoHeight; from = "影片"; }
   }
   if (!src) return;
   busy = true;
