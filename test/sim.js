@@ -2,9 +2,12 @@
 // read, a single read wrong or not at all, the table moving, PASS signs over counts), fed in as the page would, and checked
 // against the truth at every one of your turns. Run: node test/sim.js [games] [seed]
 "use strict";
-const B = require("../engine.js"), ST = require("../state.js"), LV = require("../live.js"), M = require("../models.js");
+const B = require("../engine.js"), ST = require("../state.js"), LV = require("../live.js"), M = require("../models.js"), SW = require("../swap.js");
 
 const N = +(process.argv[2] || 40), SEED = +(process.argv[3] || 7), SHOWS = process.env.SHOWS !== "0", ONE_UNREAD = process.env.ONE === "1";
+// SWAP=1: a swap game (每局先換 0～3 張), with the swap's buttons read as play buttons now and then, and cards taken out
+// of your row while choosing
+const SWAP = process.env.SWAP === "1";
 let a = SEED >>> 0;
 const rnd = () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const SK = [null, "right", "top", "left"];
@@ -55,12 +58,38 @@ const tally = { games: 0, turns: 0, leadOk: 0, ownerOk: 0, sizeOk: 0, singleKnow
 const sameSet = (x, y) => B.sameSet(x.set, y.set);
 let clock = 0;
 for (let gi = 0; gi < N; gi++) {
-  const g = deal(), live = LV.create();
+  let g = deal();
+  const live = LV.create();
   let pile = null, steps = 0;
   const feed = (r) => { clock += 700; return live.process(r, clock); };
   // a few settled readings of the table as it is
   const settle = (k) => { let last = null; for (let i = 0; i < k; i++) last = feed(reading(g, pile, {})); return last; };
-  settle(3);
+  if (SWAP) {
+    live.setSwapMode(true);
+    g.cur = 1;   // nobody's turn yet
+    settle(3);
+    const sw = live.swapInfo();
+    if (!sw || sw.phase !== "choose") tally.misses.push(`g${gi}: swap not started`);
+    // the swap: you swap what the advice's quick model would (or nothing now and then), the others their loose singles
+    const H0 = g.hand[0], mine = rnd() < 0.25 ? [] : SW.autoSwap(H0);
+    live.setSwapAdvice(B.toIds(H0), mine);
+    // choosing: buttons on screen (read as yours), cards taken out of the row
+    for (let i = 0; i < 3; i++) { const r = reading(g, null, {}); if (rnd() < 0.6) r.myTurn = true; feed(r); }
+    if (mine.length) for (let i = 0; i < 2; i++) { const r = reading(g, null, {}); const ids = r.hand.cards.filter((c) => !mine.includes(c)); r.hand = Object.assign({}, r.hand, { cards: ids, sure: ids.map(() => true), lit: ids.map(() => true), n: ids.length }); feed(r); }
+    const T = { hands: [null, g.hand[1], g.hand[2], g.hand[3]], gave: [null, SW.autoSwap(g.hand[1]), SW.autoSwap(g.hand[2]), SW.autoSwap(g.hand[3])], seed: Math.floor(rnd() * 4294967296) };
+    const hands = SW.afterSwap(H0, mine, T);
+    g = B.newGame(hands, hands.findIndex((h) => B.has(h, 0)));
+    tally.swaps = (tally.swaps || 0) + 1;
+    settle(4);
+    const got = B.toIds(B.minus(g.hand[0], H0));
+    const w = live.S.swap;
+    if (got.length ? !(w && w.got && w.got.slice().sort().join() === got.slice().sort().join()) : !!(w && w.got)) tally.misses.push(`g${gi}: swap read as ${w && w.got} truth ${got}`);
+    else tally.swapOk = (tally.swapOk || 0) + 1;
+    if (live.S.events.some((e) => e.k === "play" || e.k === "count")) tally.misses.push(`g${gi}: a play recorded during the swap`);
+    if (!B.sameSet(B.fromIds(live.S.my), g.hand[0])) tally.misses.push(`g${gi}: hand after the swap wrong`);
+    // you hold ♣3 and swapped but your row came back the same: wait out the swap
+    if (g.cur === 0 && !live.S.round) { clock += 12000; settle(3); }
+  } else settle(3);
   while (g.winner < 0 && steps++ < 200) {
     const p = g.cur;
     let move;
@@ -106,4 +135,5 @@ console.log(`lead right ${pct(tally.leadOk, tally.turns)}, owner right ${pct(tal
 console.log(`play to beat: owner ${tally.ownerOk}, size right ${tally.sizeOk}; singles known ${pct(tally.singleKnown, tally.singleTot)} (wrong ${tally.singleWrong})`);
 console.log(`counts right ${pct(tally.countOk, tally.countTot)}, cards wrongly marked played ${tally.playedWrong}`);
 console.log(`risky ${tally.risky || 0}; advice not legal ${tally.advIllegal}, PASS when you lead ${tally.advPassWhenLead}`);
+if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps}`);
 if (tally.misses.length) console.log(tally.misses.slice(0, 15).join("\n"));

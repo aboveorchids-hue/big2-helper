@@ -44,7 +44,7 @@
   const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null, swapMode: false };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -122,12 +122,49 @@
       }
     }
 
-    // one reading; returns { status, why?, turn?, notes? }. status: applied | same | settling | busy | unread | odd | err
+    // ---------- 換牌局 ----------
+    // In a swap game every deal starts with each seat swapping 0 to 3 cards. Until the first play of the deal the swap is
+    // open: your row changing by up to 3 cards is the swap (not a new deal), cards taken out of your row while choosing
+    // are not a play, and play buttons on screen belong to the swap, except when you hold ♣3 (you lead first) and the swap
+    // is over: your row has changed, there was nothing to swap, or SWAP_WAIT has passed.
+    const SWAP_WAIT = 12000;
+    const playsSeen = (S) => S.events.some((e) => e.k === "play" || e.k === "count") || L.shows.length > 0;
+    const swapOpen = () => { const S = L.S; return !!(L.swapMode && S.swap && S.my && !playsSeen(S)); };
+    function swapHold(now) {
+      const S = L.S, w = S.swap;
+      if (!swapOpen()) return false;
+      if (!S.my.includes(0)) return true;
+      return !w.got && !(w.adv && !w.adv.length) && now - w.t0 < SWAP_WAIT;
+    }
+    // the swap as it stands: { phase: "choose" | "done", hand0, gave, got, adv } while it is open, else null
+    function swapInfo() {
+      if (!swapOpen()) return null;
+      const w = L.S.swap;
+      return { phase: w.got ? "done" : "choose", hand0: w.hand0.slice(), gave: w.gave, got: w.got, adv: w.adv, t0: w.t0 };
+    }
+    // the swap of a deal just dealt: 13 cards each and nothing played yet (also when swap games are turned on then)
+    function startSwap(now) {
+      const S = L.S;
+      if (!L.swapMode || !S.my || S.my.length !== 13 || playsSeen(S) || ![1, 2, 3].every((q) => S.counts[q] === 13)) return false;
+      L.S = Object.assign({}, S, { swap: { hand0: S.my.slice(), t0: now, adv: null, gave: null, got: null } });
+      return true;
+    }
+    // the advice the page gave for the swap (cards to swap; [] to keep them all)
+    function setSwapAdvice(hand0, ids) {
+      const w = L.S.swap;
+      if (w && sameList(w.hand0, hand0)) L.S = Object.assign({}, L.S, { swap: Object.assign({}, w, { adv: ids.slice() }) });
+    }
+
+    // one reading; returns { status, why?, turn?, notes?, swapStart?, swapDone? }
+    // status: applied | same | settling | busy | unread | odd | err | swapping
     function process(r, now) {
       now = now == null ? Date.now() : now;
       noteDisplays(r, now);
       noteShows(r, now);
       noteSingle(r, now);
+      // during the swap, buttons on screen are the swap's
+      const hold = !!(r && r.myTurn && swapHold(now));
+      if (hold) r = Object.assign({}, r, { myTurn: false, noPlay: false });
       // the game says nothing of yours beats the table: its message covers your row, which is the row you had (and
       // none of it lit)
       if (r && r.noPlay && r.myTurn && L.S.my && !r.raised) r = Object.assign({}, r, { hand: { cards: L.S.my.slice(), sure: L.S.my.map(() => true), lit: L.S.my.map(() => false), geoOk: true, n: L.S.my.length, why: "" } });
@@ -139,7 +176,10 @@
         const o2 = ST.observe(r2);
         if (o2.ok) { r = r2; o = o2; }
       }
-      if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised) }; }
+      if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised), hold }; }
+      // choosing what to swap: cards taken out of your row are not played (nobody has played yet)
+      if (swapOpen() && !L.S.swap.got && !o.myTurn && o.guess.length < 13 && o.guess.length >= 10 && o.guess.every((c) => L.S.swap.hand0.includes(c))
+          && [1, 2, 3].every((q) => o.counts[q] == null || o.counts[q] === 13) && !L.S.events.some((e) => e.k === "turn")) return { status: "swapping", hold };
       // when your hand was last seen as it was (your play, when it comes, is after that)
       if (L.S.my && sameList(o.guess, L.S.my)) L.handT = now;
       if (busyOf(r)) {
@@ -152,8 +192,8 @@
       const quick = o.myTurn && !L.S.round && L.S.my && sameList(o.guess, L.S.my) && L.lastO && !L.lastO.myTurn;
       const stable = quick || L.ring.some((p) => agree(o, p));
       L.ring.push(o); if (L.ring.length > 4) L.ring.shift();
-      if (!stable) return { status: "settling" };
-      if (!news(o, L.lastO)) return { status: "same", turn: !!L.S.round };
+      if (!stable) return { status: "settling", hold };
+      if (!news(o, L.lastO)) return { status: "same", turn: !!L.S.round, hold };
       // your turn with someone's count not read (and no PASS sign over it): wait a reading or two for it, since it says
       // who played last
       if (o.myTurn && [1, 2, 3].some((q) => o.counts[q] == null && !o.pass[q]) && ++L.waitCount < WAIT_N) return { status: "settling", why: "等看清楚各家張數" };
@@ -165,6 +205,17 @@
         if (L.odd.n < ODD_N) return { status: "odd", why: "手牌和之前的對不起來" };
       }
       L.odd = null;
+      // the swap: your row of 13 now differs from the one dealt by up to 3 cards (back to the one dealt: an earlier
+      // misreading)
+      let swapDone = null;
+      if (swapOpen() && o.guess.length === 13 && o.sure.every(Boolean) && !sameList(o.guess, L.S.my)) {
+        const w = L.S.swap, got = o.guess.filter((c) => !w.hand0.includes(c));
+        if (got.length <= 3) {
+          const gave = w.hand0.filter((c) => !o.guess.includes(c));
+          L.S = Object.assign({}, L.S, { my: o.guess.slice(), hand0: o.guess.slice(), guess: [], swap: Object.assign({}, w, got.length ? { gave, got, at: now } : { gave: null, got: null }) });
+          if (got.length) swapDone = { gave, got };
+        }
+      }
       const deal0 = L.S.deal;
       const newest = L.seen.length ? L.seen[L.seen.length - 1] : null;
       const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
@@ -181,7 +232,9 @@
       for (const x of L.seen) if (!S.played.includes(x.card) && !(S.my || []).includes(x.card)) S.played.push(x.card);
       for (const x of L.shows) for (const c of x.cards) if (!S.played.includes(c) && !(S.my || []).includes(c)) S.played.push(c);
       match(now);
-      return { status: "applied", turn: !!S.round, notes: out.notes };
+      // a swap game: a deal just dealt (13 cards each, nothing played) starts its swap
+      const swapStart = !S.swap && startSwap(now);
+      return { status: "applied", turn: !!S.round, notes: out.notes, swapStart, swapDone, hold };
     }
 
     // ---------- the advice ----------
@@ -227,7 +280,8 @@
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
     function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
-    return { process, advise, reset, restore, recKey, turnKey, get S() { return L.S; } };
+    const setSwapMode = (on) => { L.swapMode = !!on; };
+    return { process, advise, reset, restore, recKey, turnKey, setSwapMode, swapInfo, setSwapAdvice, startSwap, get S() { return L.S; } };
   }
 
   const api = { create, agree, news };

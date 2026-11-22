@@ -102,6 +102,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
+      <label><input id="swapIn" type="checkbox"> 換牌局（每局開始先換 0～3 張）</label>
       <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
     </div>
@@ -120,15 +121,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b7"></script>
-<script src="read.js?v=b7"></script>
-<script src="engine.js?v=b7"></script>
-<script src="state.js?v=b7"></script>
-<script src="live.js?v=b7"></script>
+<script src="models.js?v=b8"></script>
+<script src="read.js?v=b8"></script>
+<script src="engine.js?v=b8"></script>
+<script src="state.js?v=b8"></script>
+<script src="live.js?v=b8"></script>
+<script src="swap.js?v=b8"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b7";
+const VERSION = "b8";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -227,6 +229,56 @@ function adviseSoon() {
   }, 30);
 }
 
+// ---------- 換牌局: which cards to swap at the start of each deal ----------
+let swapMode = false;
+try { swapMode = localStorage.getItem("big2-swap") === "on"; } catch (e) {}
+$("swapIn").checked = swapMode; live.setSwapMode(swapMode);
+$("swapIn").addEventListener("change", () => {
+  swapMode = $("swapIn").checked; live.setSwapMode(swapMode);
+  try { localStorage.setItem("big2-swap", swapMode ? "on" : "off"); } catch (e) {}
+  log(swapMode ? "換牌局：開" : "換牌局：關");
+  // turned on before anything was played: the swap advice for the hand on screen
+  if (swapMode && !live.S.swap && live.startSwap(Date.now())) { save(); swapAdviseSoon(); }
+});
+let swapTimer = null, swapShown = null;
+function swapAdviseSoon() {
+  const w = live.swapInfo();
+  if (!w || w.phase !== "choose") return;
+  const key = w.hand0.join(",");
+  if (key === swapShown) return;
+  clearTimeout(swapTimer);
+  setState("換牌中", "turn");
+  bodyHTML = `<p class="who">換牌局：開始前可以換 0～3 張</p><p class="verb wait"><span class="spin"></span>算要換哪幾張…</p>`; old = false; hasAdvice = false; shownTurn = null; paint();
+  swapTimer = setTimeout(() => {
+    const w2 = live.swapInfo();
+    if (!w2 || w2.phase !== "choose" || w2.hand0.join(",") !== key) return;
+    try {
+      const r = B2Swap.advise(w2.hand0, { W: B2_MODELS.W, budget: 3000 });
+      if (!r) return;
+      live.setSwapAdvice(w2.hand0, r.best.gave);
+      swapShown = key; renderSwap(r, w2.hand0); beep(!r.best.gave.length);
+      log(`換牌建議 ${r.best.gave.length ? comboText(r.best.gave) : "不換"}（${fmtPts(r.best.pts)} 分，不換 ${fmtPts(r.none.pts)}，${r.best.n} 局）｜其他 ${r.list.slice(1, 3).map((x) => `${x.gave.length ? comboText(x.gave) : "不換"} ${fmtPts(x.pts)}`).join("、")}｜${r.ms}ms`);
+    } catch (e) { log("換牌建議出錯：" + (e.message || e)); }
+  }, 30);
+}
+function renderSwap(r, hand0) {
+  const b = r.best, give = new Set(b.gave);
+  const alts = r.list.slice(1).filter((x) => x.n === b.n).slice(0, 3).map((x) => `<div class="alt"><span>${x.gave.length ? `<b>${esc(comboText(x.gave))}</b>` : "不換"}</span><span>${fmtPts(x.pts)} 分</span></div>`).join("");
+  bodyHTML = `<p class="who">換牌局：開始前可以換 0～3 張</p>` +
+    `<div class="play"><p class="verb${b.gave.length ? "" : " pass"}">${b.gave.length ? `換 ${b.gave.length} 張` : "不換"}</p>` +
+    (b.gave.length ? `<div class="row">${sortIds(b.gave).map((x) => pc(x, "big")).join("")}</div>` : "") + `</div>` +
+    `<p class="note">${b.gave.length ? `照這樣換，平均每局 <b>${fmtPts(b.pts)} 分</b>（不換 ${fmtPts(r.none.pts)} 分）` : `不換最好，平均每局 <b>${fmtPts(b.pts)} 分</b>`}</p>` +
+    `<div class="row" aria-label="你的手牌">${sortIds(hand0).map((x) => pc(x, give.has(x) ? "on" : "")).join("")}</div>` +
+    (alts ? `<div class="alts"><span>其他換法</span>${alts}</div>` : "");
+  setState("換牌中", "turn"); old = false; hasAdvice = true; shownTurn = null; paint();
+}
+function showSwapDone(d) {
+  bodyHTML = `<p class="who">換牌完成</p><p class="note">換出 <b>${esc(comboText(d.gave))}</b>，換到 <b>${esc(comboText(d.got))}</b></p>` +
+    `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, d.got.includes(x) ? "on" : "")).join("")}</div>` +
+    `<p class="note">輪到你出牌時，這裡會自動出現建議。</p>`;
+  setState("等輪到你…"); old = false; hasAdvice = false; shownTurn = null; paint();
+}
+
 // ---------- a sound when advice appears: two rising notes to play, one low note to PASS ----------
 let actx = null, soundOn = true;
 try { soundOn = localStorage.getItem("big2-sound") !== "off"; } catch (e) {}
@@ -276,6 +328,7 @@ function renderTrack() {
     const parts = plays.map((e) => (e.c ? mini(e.c) : (unknown += e.n, `<span class="mini"><span class="unk">${e.n} 張沒讀到</span></span>`)));
     rows.push(`<div class="seatrow"><b>${SEAT[q]}</b>${q ? `　剩 <b>${S.counts[q]}</b> 張` : `　剩 <b>${S.my.length}</b> 張`}<br>${parts.join("") || '<span class="note">還沒出牌</span>'}</div>`);
   }
+  if (S.swap && S.swap.gave) rows.push(`<div class="seatrow"><b>換牌</b>　換出 ${mini(S.swap.gave)}換到 ${mini(S.swap.got)}<br><span class="note">換出去沒換回來的牌在別家手上</span></div>`);
   const unseen = B.toIds(B.unseenOf(B.fromIds(S.my), B.fromIds(S.played)));
   rows.push(`<div class="seatrow"><b>還沒出現的牌</b>（${unseen.length} 張${unknown ? `，其中 ${unknown} 張是沒讀到的出牌` : ""}；2 和 A 有框）<br>${mini(unseen.slice().reverse(), (x) => (x >> 2) >= 11)}</div>`);
   el.innerHTML = rows.join("");
@@ -301,6 +354,13 @@ function onReading(res, from) {
   else if (res && !res.myTurn) noPlayTurn = false;
   const st = live.process(res, Date.now());
   if (noPlayTurn && res.myTurn) return st;
+  if (st.hold) res = Object.assign({}, res, { myTurn: false });
+  // 換牌局: the swap's advice while it is open; turned on mid-hand, the swap of the hand on screen
+  // (your turn for real, when you lead first and the swap is over: the play advice as usual)
+  const sw = res.myTurn ? null : live.swapInfo();
+  if (sw && sw.phase === "choose") { if (sw.hand0.join(",") !== swapShown) swapAdviseSoon(); else if (!shownTurn) setState("換牌中", "turn"); }
+  if (st.swapDone) { log(`換牌：換出 ${comboText(st.swapDone.gave)}，換到 ${comboText(st.swapDone.got)}`); save(); renderTrack(); if (!st.turn) showSwapDone(st.swapDone); }
+  if (sw && sw.phase === "choose" && st.status !== "applied") return st;
   if (st.status === "unread") {
     if (st.raised) { setState("選牌中", "turn"); return st; }
     if (st.why !== lastUnread) { lastUnread = st.why; log(`沒讀到：${st.why}`); }
@@ -326,6 +386,7 @@ function onReading(res, from) {
   log(`${from}｜${readingText(res)}${evs.length ? "｜" + eventsText(evs) : ""}${st.notes && st.notes.length ? "｜" + st.notes.join("；") : ""}`);
   if (S.round) log(`　你的手牌 ${comboText(S.my)}｜還沒出現 ${B.toIds(B.unseenOf(B.fromIds(S.my), B.fromIds(S.played))).length} 張`);
   save(); renderTrack();
+  if (sw && !st.turn) return st;
   if (st.turn) { setState("輪到你", "turn"); adviseSoon(); }
   else { setState("等對手…"); if (hasAdvice) { old = true; paint(); } else if (stream) { bodyHTML = `<p class="verb wait">等輪到你…</p><p class="note">已經讀到牌桌了；輪到你出牌時，這裡會自動出現建議。</p>`; paint(); } }
   return st;
@@ -578,7 +639,7 @@ $("startBtn").addEventListener("click", start);
 $("stopBtn").addEventListener("click", () => stop(false));
 $("fileIn").addEventListener("change", () => { fromFile($("fileIn").files[0]); $("fileIn").value = ""; });
 $("newBtn").addEventListener("click", () => {
-  live.reset(); lastShots = 0; shownTurn = null; save(); renderTrack();
+  live.reset(); lastShots = 0; shownTurn = null; swapShown = null; save(); renderTrack();
   log("新的一局（按鈕）"); showIdle();
 });
 $("copyBtn").addEventListener("click", () => {
