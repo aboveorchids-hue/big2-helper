@@ -134,19 +134,25 @@
       const S = L.S, w = S.swap;
       if (!swapOpen()) return false;
       if (!S.my.includes(0)) return true;
-      return !w.got && !(w.adv && !w.adv.length) && now - w.t0 < SWAP_WAIT;
+      return !w.done && !(w.adv && !w.adv.length) && now - w.t0 < SWAP_WAIT;
     }
     // the swap as it stands: { phase: "choose" | "done", hand0, gave, got, adv } while it is open, else null
+    // (done with gave/got null: your row changed by more than 3 cards, which cards went where is not known)
     function swapInfo() {
       if (!swapOpen()) return null;
       const w = L.S.swap;
-      return { phase: w.got ? "done" : "choose", hand0: w.hand0.slice(), gave: w.gave, got: w.got, adv: w.adv, t0: w.t0 };
+      return { phase: w.done ? "done" : "choose", hand0: w.hand0.slice(), gave: w.gave, got: w.got, adv: w.adv, t0: w.t0 };
+    }
+    // the cards you swapped out and got, from the row dealt and the row now
+    function swapDiff(w, my) {
+      const got = my.filter((c) => !w.hand0.includes(c)), gave = w.hand0.filter((c) => !my.includes(c));
+      return got.length <= 3 && gave.length === got.length ? { gave, got } : null;
     }
     // the swap of a deal just dealt: 13 cards each and nothing played yet (also when swap games are turned on then)
     function startSwap(now) {
       const S = L.S;
       if (!L.swapMode || !S.my || S.my.length !== 13 || playsSeen(S) || ![1, 2, 3].every((q) => S.counts[q] === 13)) return false;
-      L.S = Object.assign({}, S, { swap: { hand0: S.my.slice(), t0: now, adv: null, gave: null, got: null } });
+      L.S = Object.assign({}, S, { swap: { hand0: S.my.slice(), t0: now, adv: null, gave: null, got: null, done: false } });
       return true;
     }
     // the advice the page gave for the swap (cards to swap; [] to keep them all)
@@ -178,7 +184,7 @@
       }
       if (!o.ok) { L.ring = []; return { status: "unread", why: o.why, raised: !!(r && r.raised), hold }; }
       // choosing what to swap: cards taken out of your row are not played (nobody has played yet)
-      if (swapOpen() && !L.S.swap.got && !o.myTurn && o.guess.length < 13 && o.guess.length >= 10 && o.guess.every((c) => L.S.swap.hand0.includes(c))
+      if (swapOpen() && !L.S.swap.done && !o.myTurn && o.guess.length < 13 && o.guess.length >= 10 && o.guess.every((c) => L.S.swap.hand0.includes(c))
           && [1, 2, 3].every((q) => o.counts[q] == null || o.counts[q] === 13) && !L.S.events.some((e) => e.k === "turn")) return { status: "swapping", hold };
       // when your hand was last seen as it was (your play, when it comes, is after that)
       if (L.S.my && sameList(o.guess, L.S.my)) L.handT = now;
@@ -205,15 +211,16 @@
         if (L.odd.n < ODD_N) return { status: "odd", why: "手牌和之前的對不起來" };
       }
       L.odd = null;
-      // the swap: your row of 13 now differs from the one dealt by up to 3 cards (back to the one dealt: an earlier
-      // misreading)
+      // the swap: your row of 13 now differs from the one dealt by up to 3 cards (cards not read surely count as read;
+      // a later reading puts them right). Back to the one dealt: an earlier misreading.
       let swapDone = null;
-      if (swapOpen() && o.guess.length === 13 && o.sure.every(Boolean) && !sameList(o.guess, L.S.my)) {
-        const w = L.S.swap, got = o.guess.filter((c) => !w.hand0.includes(c));
-        if (got.length <= 3) {
-          const gave = w.hand0.filter((c) => !o.guess.includes(c));
-          L.S = Object.assign({}, L.S, { my: o.guess.slice(), hand0: o.guess.slice(), guess: [], swap: Object.assign({}, w, got.length ? { gave, got, at: now } : { gave: null, got: null }) });
-          if (got.length) swapDone = { gave, got };
+      const open0 = swapOpen() ? L.S.swap : null;
+      if (open0 && o.guess.length === 13 && !sameList(o.guess, L.S.my)) {
+        const d = swapDiff(open0, o.guess);
+        if (d) {
+          const guess = o.guess.filter((c, i) => !o.sure[i]);
+          L.S = Object.assign({}, L.S, { my: o.guess.slice(), hand0: o.guess.slice(), guess, swap: Object.assign({}, open0, d.got.length ? { gave: d.gave, got: d.got, done: true, at: now } : { gave: null, got: null, done: false }) });
+          if (d.got.length && !(open0.done && open0.got && sameList(open0.got, d.got))) swapDone = d;
         }
       }
       const deal0 = L.S.deal;
@@ -228,6 +235,16 @@
       for (const e of S.events) if (e.at === S.shots && e.k === "count") { L.disp[e.s] = null; if (e.t == null) e.t = now; }
       L.S = S; L.lastO = o;
       if (S.deal !== deal0) { L.seen = []; L.shows = []; }
+      // a whole new row of 13 while the swap is open (nothing played since the deal): the row after the swap, read
+      // differently from the one dealt, not another deal (unless the swap advice was not out yet: then the row dealt
+      // was misread, and the swap starts over from this one)
+      if (S.deal !== deal0 && open0 && open0.adv && now - open0.t0 < 90000 && S.my.length === 13) {
+        S.swap = Object.assign({}, open0, { gave: null, got: null, done: true, at: now });
+        swapDone = { gave: null, got: null };
+        out.notes = (out.notes || []).filter((x) => x !== "新的一局").concat("換牌後的手牌和發牌時差超過 3 張，照現在的手牌算");
+      }
+      // while nothing is played yet, what was swapped follows your row as read now
+      if (S.swap && S.swap.done && S.swap.got && !playsSeen(S) && S.my.length === 13) { const d = swapDiff(S.swap, S.my); if (d && d.got.length) { S.swap.gave = d.gave; S.swap.got = d.got; } }
       // the singles seen so far are played cards; match them to the plays
       for (const x of L.seen) if (!S.played.includes(x.card) && !(S.my || []).includes(x.card)) S.played.push(x.card);
       for (const x of L.shows) for (const c of x.cards) if (!S.played.includes(c) && !(S.my || []).includes(c)) S.played.push(c);

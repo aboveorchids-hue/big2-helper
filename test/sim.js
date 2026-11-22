@@ -61,34 +61,47 @@ for (let gi = 0; gi < N; gi++) {
   let g = deal();
   const live = LV.create();
   let pile = null, steps = 0;
-  const feed = (r) => { clock += 700; return live.process(r, clock); };
+  let feed = (r) => { clock += 700; return live.process(r, clock); };
   // a few settled readings of the table as it is
   const settle = (k) => { let last = null; for (let i = 0; i < k; i++) last = feed(reading(g, pile, {})); return last; };
   if (SWAP) {
     live.setSwapMode(true);
     g.cur = 1;   // nobody's turn yet
-    settle(3);
+    let starts = 0;
+    const feed0 = feed;
+    feed = (r) => { const st = feed0(r); if (st && st.swapStart) starts++; return st; };
+    // now and then a card of the row dealt is misread the same way every time
+    const H0true = g.hand[0];
+    let mis = null;
+    if (rnd() < 0.2) { const ids = B.toIds(H0true), out = B.toIds(B.minus(B.fromIds([...Array(52).keys()]), H0true)); mis = [ids[Math.floor(rnd() * 13)], out[Math.floor(rnd() * out.length)]]; }
+    const dealt = (r) => { if (mis) { const ids = r.hand.cards.map((c) => (c === mis[0] ? mis[1] : c)).sort((x, y) => x - y); r.hand = Object.assign({}, r.hand, { cards: ids }); } return r; };
+    for (let i = 0; i < 3; i++) feed(dealt(reading(g, pile, {})));
     const sw = live.swapInfo();
     if (!sw || sw.phase !== "choose") tally.misses.push(`g${gi}: swap not started`);
     // the swap: you swap what the advice's quick model would (or nothing now and then), the others their loose singles
     const H0 = g.hand[0], mine = rnd() < 0.25 ? [] : SW.autoSwap(H0);
-    live.setSwapAdvice(B.toIds(H0), mine);
+    if (live.S.swap) live.setSwapAdvice(live.S.swap.hand0, mine);
     // choosing: buttons on screen (read as yours), cards taken out of the row
-    for (let i = 0; i < 3; i++) { const r = reading(g, null, {}); if (rnd() < 0.6) r.myTurn = true; feed(r); }
-    if (mine.length) for (let i = 0; i < 2; i++) { const r = reading(g, null, {}); const ids = r.hand.cards.filter((c) => !mine.includes(c)); r.hand = Object.assign({}, r.hand, { cards: ids, sure: ids.map(() => true), lit: ids.map(() => true), n: ids.length }); feed(r); }
+    for (let i = 0; i < 3; i++) { const r = dealt(reading(g, null, {})); if (rnd() < 0.6) r.myTurn = true; feed(r); }
+    if (mine.length) for (let i = 0; i < 2; i++) { const r = dealt(reading(g, null, {})); const ids = r.hand.cards.filter((c) => !mine.includes(c)); r.hand = Object.assign({}, r.hand, { cards: ids, sure: ids.map(() => true), lit: ids.map(() => true), n: ids.length }); feed(r); }
     const T = { hands: [null, g.hand[1], g.hand[2], g.hand[3]], gave: [null, SW.autoSwap(g.hand[1]), SW.autoSwap(g.hand[2]), SW.autoSwap(g.hand[3])], seed: Math.floor(rnd() * 4294967296) };
     const hands = SW.afterSwap(H0, mine, T);
     g = B.newGame(hands, hands.findIndex((h) => B.has(h, 0)));
     tally.swaps = (tally.swaps || 0) + 1;
+    // the cards just got are not read surely at first, now and then
+    const fresh = B.toIds(B.minus(g.hand[0], H0));
+    if (fresh.length && rnd() < 0.4) for (let i = 0; i < 2; i++) { const r = reading(g, null, {}); r.hand = Object.assign({}, r.hand, { sure: r.hand.cards.map((c) => !fresh.includes(c)) }); feed(r); }
     settle(4);
+    if (starts !== 1) tally.misses.push(`g${gi}: swap advice started ${starts} times`);
     const got = B.toIds(B.minus(g.hand[0], H0));
     const w = live.S.swap;
-    if (got.length ? !(w && w.got && w.got.slice().sort().join() === got.slice().sort().join()) : !!(w && w.got)) tally.misses.push(`g${gi}: swap read as ${w && w.got} truth ${got}`);
+    if (mis) tally.misreadDeals = (tally.misreadDeals || 0) + 1;
+    else if (got.length ? !(w && w.got && w.got.slice().sort().join() === got.slice().sort().join()) : !!(w && w.got)) tally.misses.push(`g${gi}: swap read as ${w && w.got} truth ${got}`);
     else tally.swapOk = (tally.swapOk || 0) + 1;
     if (live.S.events.some((e) => e.k === "play" || e.k === "count")) tally.misses.push(`g${gi}: a play recorded during the swap`);
     if (!B.sameSet(B.fromIds(live.S.my), g.hand[0])) tally.misses.push(`g${gi}: hand after the swap wrong`);
     // you hold ♣3 and swapped but your row came back the same: wait out the swap
-    if (g.cur === 0 && !live.S.round) { clock += 12000; settle(3); }
+    if (g.cur === 0 && !live.S.round) { tally.waited = (tally.waited || 0) + 1; clock += 12000; settle(3); }
   } else settle(3);
   while (g.winner < 0 && steps++ < 200) {
     const p = g.cur;
@@ -135,5 +148,5 @@ console.log(`lead right ${pct(tally.leadOk, tally.turns)}, owner right ${pct(tal
 console.log(`play to beat: owner ${tally.ownerOk}, size right ${tally.sizeOk}; singles known ${pct(tally.singleKnown, tally.singleTot)} (wrong ${tally.singleWrong})`);
 console.log(`counts right ${pct(tally.countOk, tally.countTot)}, cards wrongly marked played ${tally.playedWrong}`);
 console.log(`risky ${tally.risky || 0}; advice not legal ${tally.advIllegal}, PASS when you lead ${tally.advPassWhenLead}`);
-if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps}`);
+if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps - (tally.misreadDeals || 0)} (+${tally.misreadDeals || 0} with a card of the row dealt misread); you lead first and had to wait out the swap ${tally.waited || 0}`);
 if (tally.misses.length) console.log(tally.misses.slice(0, 15).join("\n"));

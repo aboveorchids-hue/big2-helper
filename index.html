@@ -121,16 +121,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b8"></script>
-<script src="read.js?v=b8"></script>
-<script src="engine.js?v=b8"></script>
-<script src="state.js?v=b8"></script>
-<script src="live.js?v=b8"></script>
-<script src="swap.js?v=b8"></script>
+<script src="models.js?v=b9"></script>
+<script src="read.js?v=b9"></script>
+<script src="engine.js?v=b9"></script>
+<script src="state.js?v=b9"></script>
+<script src="live.js?v=b9"></script>
+<script src="swap.js?v=b9"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b8";
+const VERSION = "b9";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -273,8 +273,8 @@ function renderSwap(r, hand0) {
   setState("換牌中", "turn"); old = false; hasAdvice = true; shownTurn = null; paint();
 }
 function showSwapDone(d) {
-  bodyHTML = `<p class="who">換牌完成</p><p class="note">換出 <b>${esc(comboText(d.gave))}</b>，換到 <b>${esc(comboText(d.got))}</b></p>` +
-    `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, d.got.includes(x) ? "on" : "")).join("")}</div>` +
+  bodyHTML = `<p class="who">換牌完成</p><p class="note">${d.got ? `換出 <b>${esc(comboText(d.gave))}</b>，換到 <b>${esc(comboText(d.got))}</b>` : "換了哪幾張沒看清楚，照現在的手牌算"}</p>` +
+    `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, d.got && d.got.includes(x) ? "on" : "")).join("")}</div>` +
     `<p class="note">輪到你出牌時，這裡會自動出現建議。</p>`;
   setState("等輪到你…"); old = false; hasAdvice = false; shownTurn = null; paint();
 }
@@ -359,7 +359,7 @@ function onReading(res, from) {
   // (your turn for real, when you lead first and the swap is over: the play advice as usual)
   const sw = res.myTurn ? null : live.swapInfo();
   if (sw && sw.phase === "choose") { if (sw.hand0.join(",") !== swapShown) swapAdviseSoon(); else if (!shownTurn) setState("換牌中", "turn"); }
-  if (st.swapDone) { log(`換牌：換出 ${comboText(st.swapDone.gave)}，換到 ${comboText(st.swapDone.got)}`); save(); renderTrack(); if (!st.turn) showSwapDone(st.swapDone); }
+  if (st.swapDone) { log(st.swapDone.got ? `換牌：換出 ${comboText(st.swapDone.gave)}，換到 ${comboText(st.swapDone.got)}` : "換牌：換了哪幾張沒看清楚"); save(); renderTrack(); if (!res.myTurn) showSwapDone(st.swapDone); }
   if (sw && sw.phase === "choose" && st.status !== "applied") return st;
   if (st.status === "unread") {
     if (st.raised) { setState("選牌中", "turn"); return st; }
