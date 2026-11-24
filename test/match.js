@@ -7,8 +7,8 @@
 //              s:wf=<weights.json> plays the weighted-feature player with other weights; swap=none|auto|advice in swap
 //              games; any other name is played by the advice function in --adv=<file> (its `advise`, given the options)
 // Env: SEED (first deal), JOBS (processes, default the number of cores), SWAP=1 (each deal starts with a swap)
-// Prints each strategy's points per game (± standard error over deals) and, from the second on, the difference from the
-// first on the same deals.
+// Prints each strategy's points per game (± standard error over deals), how often it goes out first and how often it loses
+// 20 points or more, and, from the second on, the differences from the first on the same deals (points, going out first).
 "use strict";
 const path = require("path");
 const { fork } = require("child_process");
@@ -68,7 +68,8 @@ function oppMove(g, p, pol) { return pol.custom ? customMove(g, p, pol) : B.choo
 
 // ---- you ----
 // smart / s: as above. pimc: the advice (B.choosePIMC) with deals (most), min (fewest), cand (plays compared), z (drop a
-// play this many standard errors behind), aim (pts | win); `fixed=1` plays exactly `deals` deals with every play.
+// play this many standard errors behind), aim (pts | win), bonus (兼顧: the points plus this many more for going out
+// first); `fixed=1` plays exactly `deals` deals with every play.
 function parseHero(spec) {
   const [name, rest] = spec.split(":");
   const o = { name, spec };
@@ -86,7 +87,7 @@ function heroMove(g, h, seed, info) {
   if (outs.length) return outs.reduce((a, b) => (B.winnerMult(b) > B.winnerMult(a) ? b : a));
   if (L.length === 1 && g.last.type === B.T_PASS) return L[0];
   const adapt = h.fixed ? null : { z: h.z || 2.5, min: h.min || 200, max: h.deals || 1500, batch: 100, budget: 1e9 };
-  const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts" };
+  const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
   if (h.name === "pimc") { const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return r.card; }
   if (ADV) { const r = ADV(g, p, L, Object.assign({}, pol, h), info); return r; }
   throw new Error("strategy? " + h.spec);
@@ -168,13 +169,18 @@ if (require.main !== module) {
     console.log(`${deals} deals x 4 seats = ${n} games, opponents ${opp}${swap ? ", swap games" : ""}, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     // per deal (the four rotations together), for paired differences
     const perDeal = (a) => { const o = []; for (let i = 0; i < a.length; i += 4) o.push((a[i] + a[i + 1] + a[i + 2] + a[i + 3]) / 4); return o; };
-    const deal0 = perDeal(all[0].map((x) => x[0]));
+    const deal0 = perDeal(all[0].map((x) => x[0])), win0 = perDeal(all[0].map((x) => x[1]));
     heroes.forEach((h, i) => {
       const pts = all[i].map((x) => x[0]), win = all[i].map((x) => x[1]);
       const dec = all[i].reduce((s, x) => s + x[3], 0), dl = all[i].reduce((s, x) => s + x[2], 0);
-      let line = `${h.padEnd(28)} pts/game ${mean(pts).toFixed(2).padStart(6)} ± ${(sd(perDeal(pts)) / Math.sqrt(n / 4)).toFixed(2)}   win ${(100 * mean(win)).toFixed(1)}%`;
+      const big = pts.map((x) => (x <= -20 ? 1 : 0));
+      let line = `${h.padEnd(28)} pts/game ${mean(pts).toFixed(2).padStart(6)} ± ${(sd(perDeal(pts)) / Math.sqrt(n / 4)).toFixed(2)}   win ${(100 * mean(win)).toFixed(1)}%   lose 20+ ${(100 * mean(big)).toFixed(1)}%`;
       if (dec) line += `   deals/decision ${(dl / dec).toFixed(0)}`;
-      if (i > 0) { const d = perDeal(pts).map((x, k) => x - deal0[k]); line += `   vs ${heroes[0]}: ${mean(d) >= 0 ? "+" : ""}${mean(d).toFixed(2)} ± ${(sd(d) / Math.sqrt(d.length)).toFixed(2)}`; }
+      if (i > 0) {
+        const d = perDeal(pts).map((x, k) => x - deal0[k]);
+        const dw = perDeal(win).map((x, k) => x - win0[k]);
+        line += `   vs ${heroes[0]}: ${mean(d) >= 0 ? "+" : ""}${mean(d).toFixed(2)} ± ${(sd(d) / Math.sqrt(d.length)).toFixed(2)} pts, ${mean(dw) >= 0 ? "+" : ""}${(100 * mean(dw)).toFixed(1)} ± ${(100 * sd(dw) / Math.sqrt(dw.length)).toFixed(1)}% win`;
+      }
       console.log(line);
     });
   });

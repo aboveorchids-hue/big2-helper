@@ -117,7 +117,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
-      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（平均每局分數最多）</option><option value="win">勝率優先（先出完的機率最高）</option></select></label>
+      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（平均每局分數最多）</option><option value="win">勝率優先（先出完的機率最高）</option><option value="mix">兼顧（分數差不多時選勝率高的）</option></select></label>
       <label><input id="swapIn" type="checkbox"> 換牌局（每局開始先換 0～3 張）</label>
       <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
@@ -130,6 +130,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
         <legend>出牌建議</legend>
         <div class="nums"></div>
         <p class="note">時間到了也會先算完「至少幾局」，之後每次檢查時才看時間。</p>
+        <p class="note">「贏一局另加幾分」只在建議依據選「兼顧」時用：每種出法比「平均分數＋先出完的機率×這個分數」。越大越看重勝率，0 就和神幣優先一樣。換牌建議在「兼顧」時照神幣優先算。</p>
         <p class="note err" role="alert"></p>
         <button class="btn small" type="button" data-reset>恢復預設</button>
       </fieldset>
@@ -156,16 +157,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b13"></script>
-<script src="read.js?v=b13"></script>
-<script src="engine.js?v=b13"></script>
-<script src="state.js?v=b13"></script>
-<script src="live.js?v=b13"></script>
-<script src="swap.js?v=b13"></script>
+<script src="models.js?v=b14"></script>
+<script src="read.js?v=b14"></script>
+<script src="engine.js?v=b14"></script>
+<script src="state.js?v=b14"></script>
+<script src="live.js?v=b14"></script>
+<script src="swap.js?v=b14"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b13";
+const VERSION = "b14";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -238,7 +239,12 @@ function renderAdvice(r) {
   if (r.kind === "finish") line = "這手出完就贏了";
   else if (r.kind === "forced") line = "只有這一種出法";
   else if (r.kind === "none") line = R.top ? `沒有能壓${SEAT[R.top.s]}這手的牌` : "沒有能出的牌";
-  else if (r.stats && r.stats.length) { const t = r.stats[0]; line = (r.ev ? `照這樣打，平均每局 <b>${fmtPts(t.pts)} 分</b>（先出完約 ${pct(t)}）` : `照這樣打，先出完約 <b>${pct(t)}</b>（平均每局 ${fmtPts(t.pts)} 分）`) + `<br><span class="sub">模擬 ${t.n} 局</span>`; }
+  else if (r.stats && r.stats.length) {
+    const t = r.stats[0];
+    line = (r.winBonus ? `照這樣打，平均每局 <b>${fmtPts(t.pts)} 分</b>、先出完約 <b>${pct(t)}</b>`
+      : r.ev ? `照這樣打，平均每局 <b>${fmtPts(t.pts)} 分</b>（先出完約 ${pct(t)}）` : `照這樣打，先出完約 <b>${pct(t)}</b>（平均每局 ${fmtPts(t.pts)} 分）`) +
+      `<br><span class="sub">模擬 ${t.n} 局${r.winBonus ? `・兼顧：贏一局另加 ${r.winBonus} 分來比` : ""}</span>`;
+  }
   const warn = [];
   if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}沒有逐張讀，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
   if (r.risky) warn.push("照你亮著的牌看不出這手一定壓得過；遊戲不讓你出的話，就按 PASS");
@@ -266,10 +272,10 @@ function adviseSoon() {
     if (live.recKey() !== key) return;
     const a0 = performance.now();
     try {
-      const r = live.advise({ W: B2_MODELS.W, ev: aim === "pts", adapt: SIM.play });
+      const r = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, adapt: SIM.play });
       if (!r) return;
       renderAdvice(r); shownTurn = live.turnKey(); beep(r.card.type === B.T_PASS);
-      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aim === "win" ? "勝率優先" : "神幣優先"}，${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
+      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aimName()}，${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
     } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
   }, 30);
 }
@@ -288,8 +294,10 @@ function redoAdvice(only) {
 // standard errors on the same deals; at least 200 deals, at most 1500, at most 2 seconds): about as sure as 1500 deals
 // every time, for about 1.5 times the work of the old fixed 300. The swap advice works the same way on its own numbers
 // (at most 3000 tables, 3 seconds). Both can be changed on the page; they are kept like the other settings.
+// play.bonus: for 兼顧, how many more points going out first counts for (see the aim below)
+const BONUS_DEF = 20;
 const SIM_DEF = {
-  play: { z: 2.5, min: 200, max: 1500, batch: 100, budget: 2000 },
+  play: { z: 2.5, min: 200, max: 1500, batch: 100, budget: 2000, bonus: BONUS_DEF },
   swap: { z: 2.5, min: 200, max: 3000, batch: 100, budget: 3000 },
 };
 // lo..hi keep the page from locking up for long (the simulation runs on the page's own thread)
@@ -299,12 +307,14 @@ const SIM_FIELDS = [
   { k: "max", name: "最多幾局", lo: 10, hi: 20000, step: 100, int: true },
   { k: "batch", name: "每幾局檢查一次", lo: 1, hi: 5000, step: 10, int: true },
   { k: "budget", name: "時間上限（毫秒）", lo: 100, hi: 20000, step: 100, int: true },
+  { k: "bonus", name: "贏一局另加幾分", lo: 0, hi: 500, step: 1, int: false, only: "play" },
 ];
+const fieldsOf = (g) => SIM_FIELDS.filter((f) => !f.only || f.only === g);
 const SIM_BOX = { play: "advPlay", swap: "advSwap" };
 const SIMSTORE = "big2-sim";
 // what is wrong with a set of numbers ("" when nothing): the field and why
-function simProblem(v) {
-  for (const f of SIM_FIELDS) {
+function simProblem(v, g) {
+  for (const f of fieldsOf(g)) {
     const x = v[f.k];
     if (typeof x !== "number" || !Number.isFinite(x)) return { k: f.k, why: `「${f.name}」要填數字` };
     if (f.int && !Number.isInteger(x)) return { k: f.k, why: `「${f.name}」要填整數` };
@@ -321,38 +331,40 @@ try {
   for (const g of ["play", "swap"]) {
     if (!d[g]) continue;
     const v = Object.assign({}, SIM_DEF[g], d[g]);
-    if (simProblem(v)) log(`記住的${g === "play" ? "出牌" : "換牌"}建議模擬設定用不了，改回預設`);
+    if (simProblem(v, g)) log(`記住的${g === "play" ? "出牌" : "換牌"}建議模擬設定用不了，改回預設`);
     else SIM[g] = v;
   }
 } catch (e) {}
-const isDefault = (g) => SIM_FIELDS.every((f) => SIM[g][f.k] === SIM_DEF[g][f.k]);
-const simText = (g) => { const v = SIM[g]; return `淘汰門檻 ${v.z}、至少 ${v.min} 局、最多 ${v.max} 局、每 ${v.batch} 局檢查、${v.budget} 毫秒${isDefault(g) ? "（預設）" : ""}`; };
+const isDefault = (g) => fieldsOf(g).every((f) => SIM[g][f.k] === SIM_DEF[g][f.k]);
+const simText = (g) => { const v = SIM[g]; return `淘汰門檻 ${v.z}、至少 ${v.min} 局、最多 ${v.max} 局、每 ${v.batch} 局檢查、${v.budget} 毫秒${g === "play" ? `、兼顧時贏一局另加 ${v.bonus} 分` : ""}${isDefault(g) ? "（預設）" : ""}`; };
 function paintSim(g) {
   const box = $(SIM_BOX[g]);
-  for (const f of SIM_FIELDS) { const el = box.querySelector(`input[data-k="${f.k}"]`); el.value = SIM[g][f.k]; el.removeAttribute("aria-invalid"); }
+  for (const f of fieldsOf(g)) { const el = box.querySelector(`input[data-k="${f.k}"]`); el.value = SIM[g][f.k]; el.removeAttribute("aria-invalid"); }
   box.querySelector(".err").textContent = "";
   $("advMark").textContent = isDefault("play") && isDefault("swap") ? "" : "（已自訂）";
 }
 function setSim(g, v) {
+  const changed = fieldsOf(g).filter((f) => v[f.k] !== SIM[g][f.k]).map((f) => f.k);
   SIM[g] = v;
   try { localStorage.setItem(SIMSTORE, JSON.stringify(SIM)); } catch (e) {}
   paintSim(g);
   log(`${g === "play" ? "出牌" : "換牌"}建議模擬：${simText(g)}`);
-  redoAdvice(g);
+  // (the bonus alone changes nothing unless the aim is 兼顧)
+  if (!(aim !== "mix" && changed.every((k) => k === "bonus"))) redoAdvice(g);
 }
 for (const g of ["play", "swap"]) {
   const box = $(SIM_BOX[g]);
-  box.querySelector(".nums").innerHTML = SIM_FIELDS.map((f) =>
+  box.querySelector(".nums").innerHTML = fieldsOf(g).map((f) =>
     `<label class="num"><span class="k">${f.name}</span><input type="number" data-k="${f.k}" min="${f.lo}" max="${f.hi}" step="${f.step}" inputmode="${f.int ? "numeric" : "decimal"}"><span class="d">預設 ${SIM_DEF[g][f.k]}</span></label>`).join("");
   // a change (on leaving the field, or Return): all the group's numbers checked together, used only if they all fit
   box.addEventListener("change", (e) => {
     if (!e.target.matches("input[data-k]")) return;
     const v = {};
-    for (const f of SIM_FIELDS) { const s = box.querySelector(`input[data-k="${f.k}"]`).value.trim(); v[f.k] = s === "" ? NaN : Number(s); }
-    const bad = simProblem(v);
+    for (const f of fieldsOf(g)) { const s = box.querySelector(`input[data-k="${f.k}"]`).value.trim(); v[f.k] = s === "" ? NaN : Number(s); }
+    const bad = simProblem(v, g);
     for (const el of box.querySelectorAll("input[data-k]")) el.removeAttribute("aria-invalid");
     if (bad) { box.querySelector(`input[data-k="${bad.k}"]`).setAttribute("aria-invalid", "true"); box.querySelector(".err").textContent = bad.why + "；還在用上次的值。"; return; }
-    if (SIM_FIELDS.every((f) => v[f.k] === SIM[g][f.k])) { paintSim(g); return; }
+    if (fieldsOf(g).every((f) => v[f.k] === SIM[g][f.k])) { paintSim(g); return; }
     setSim(g, v);
   });
   box.querySelector("[data-reset]").addEventListener("click", () => { if (isDefault(g)) paintSim(g); else setSim(g, Object.assign({}, SIM_DEF[g])); });
@@ -360,15 +372,22 @@ for (const g of ["play", "swap"]) {
 }
 if (!isDefault("play") || !isDefault("swap")) log(`模擬設定：出牌 ${simText("play")}｜換牌 ${simText("swap")}`);
 
-// ---------- what the advice aims at: points on average, or going out first ----------
+// ---------- what the advice aims at: points on average, going out first, or 兼顧 ----------
+// 兼顧: each play by its points on average plus SIM.play.bonus points times how often it goes out first, so of plays
+// about as good in points the one that goes out first more often, and where none is likely to go out first (the
+// differences small) mostly the points. Only the play advice: the swap advice counts it as 神幣優先.
+const aimOf = (v) => (v === "win" || v === "mix" ? v : "pts");
+const swapAim = (a) => (a === "win" ? "win" : "pts");
+const aimName = () => (aim === "win" ? "勝率優先" : aim === "mix" ? `兼顧，贏一局另加 ${SIM.play.bonus} 分` : "神幣優先");
 let aim = "pts";
-try { aim = localStorage.getItem("big2-aim") === "win" ? "win" : "pts"; } catch (e) {}
+try { aim = aimOf(localStorage.getItem("big2-aim")); } catch (e) {}
 $("aimIn").value = aim;
 $("aimIn").addEventListener("change", () => {
-  aim = $("aimIn").value === "win" ? "win" : "pts";
+  const was = aim;
+  aim = aimOf($("aimIn").value);
   try { localStorage.setItem("big2-aim", aim); } catch (e) {}
-  log(`建議依據：${aim === "win" ? "勝率優先" : "神幣優先"}`);
-  redoAdvice();
+  log(`建議依據：${aimName()}`);
+  redoAdvice(swapAim(was) === swapAim(aim) ? "play" : undefined);
 });
 
 // ---------- 換牌局: which cards to swap at the start of each deal ----------
@@ -395,7 +414,7 @@ function swapAdviseSoon() {
     const w2 = live.swapInfo();
     if (!w2 || w2.phase !== "choose" || w2.hand0.join(",") !== key) return;
     try {
-      const r = B2Swap.advise(w2.hand0, { W: B2_MODELS.W, budget: SIM.swap.budget, adapt: SIM.swap, aim });
+      const r = B2Swap.advise(w2.hand0, { W: B2_MODELS.W, budget: SIM.swap.budget, adapt: SIM.swap, aim: swapAim(aim) });
       if (!r) return;
       live.setSwapAdvice(w2.hand0, r.best.gave);
       swapShown = key; renderSwap(r, w2.hand0); beep(!r.best.gave.length);

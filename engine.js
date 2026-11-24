@@ -533,7 +533,10 @@
     // deals, or after `budget` ms. Else exactly pol.nDet deals for every play.
     const A = pol.adapt, nMax = A ? A.max : pol.nDet;
     const V = A ? C.map(() => new Float32Array(nMax)) : null;
-    const mean = (i) => (pol.ev ? pts[i] : wins[i]) / Math.max(1, n[i]);
+    // the aim: going out first (pol.ev false), or the points (pol.ev), with pol.winBonus more points counted for going
+    // out first (兼顧: when the points are close, the play that goes out first more often)
+    const X = pol.ev ? pol.winBonus || 0 : 0;
+    const mean = (i) => (pol.ev ? pts[i] + X * wins[i] : wins[i]) / Math.max(1, n[i]);
     const t0 = Date.now();
     for (let d = 0; d < nMax; d++) {
       const deck = unseen.slice();
@@ -548,7 +551,7 @@
         playOut(x, pols);
         const w = x.winner === p ? 1 : 0, s = pointsFor(x, p);
         wins[i] += w; pts[i] += s;
-        if (V) V[i][n[i]] = pol.ev ? s : w;
+        if (V) V[i][n[i]] = pol.ev ? s + X * w : w;
         n[i]++;
       }
       if (A && (d + 1) % A.batch === 0 && d + 1 >= A.min) {
@@ -565,7 +568,7 @@
         if (alive.filter(Boolean).length === 1 || Date.now() - t0 > A.budget) break;
       }
     }
-    // the aim: how often you go out first, or (pol.ev) the points you win or lose on average
+    // the aim: how often you go out first, or (pol.ev) the points you win or lose on average (+ pol.winBonus per win)
     let bi = -1;
     for (let i = 0; i < C.length; i++) if (alive[i] && (bi < 0 || mean(i) > mean(bi))) bi = i;
     for (let i = 0; i < C.length; i++) if (alive[i] && mean(i) === mean(bi) && sameCombo(C[i], pref)) { bi = i; break; }
