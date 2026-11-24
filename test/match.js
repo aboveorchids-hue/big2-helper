@@ -69,7 +69,8 @@ function oppMove(g, p, pol) { return pol.custom ? customMove(g, p, pol) : B.choo
 // ---- you ----
 // smart / s: as above. pimc: the advice (B.choosePIMC) with deals (most), min (fewest), cand (plays compared), z (drop a
 // play this many standard errors behind), aim (pts | win), bonus (兼顧: the points plus this many more for going out
-// first); `fixed=1` plays exactly `deals` deals with every play.
+// first), lock (1: a sure way out, B.lockPlan, played without simulating); `fixed=1` plays exactly `deals` deals with
+// every play.
 function parseHero(spec) {
   const [name, rest] = spec.split(":");
   const o = { name, spec };
@@ -88,7 +89,18 @@ function heroMove(g, h, seed, info) {
   if (L.length === 1 && g.last.type === B.T_PASS) return L[0];
   const adapt = h.fixed ? null : { z: h.z || 2.5, min: h.min || 200, max: h.deals || 1500, batch: 100, budget: 1e9 };
   const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
-  if (h.name === "pimc") { const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return r.card; }
+  if (h.name === "pimc") {
+    if (h.lock) {
+      const lk = B.lockPlan(g, p, L);
+      if (lk) {
+        // (how often the simulation would have played something else)
+        const r = B.choosePIMC(g, p, L, pol);
+        info.lock++; info.locked = true; if (!B.sameCombo(r.card, lk.plan[0])) info.lockDiff++;
+        return lk.plan[0];
+      }
+    }
+    const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return r.card;
+  }
   if (ADV) { const r = ADV(g, p, L, Object.assign({}, pol, h), info); return r; }
   throw new Error("strategy? " + h.spec);
 }
@@ -100,7 +112,7 @@ function playGame(dealSeed, rot, hero, oppKind, swapPlan) {
   const pols = [null, 1, 2, 3].map((q) => (q ? oppPolicy(oppKind, q, dealSeed * 4 + rot) : null));
   if (swapPlan) hands = swapPlan(hands, dealSeed, rot);
   const g = B.newGame(hands, hands.findIndex((h) => B.has(h, 0)));
-  const info = { deals: 0, dec: 0 };
+  const info = { deals: 0, dec: 0, lock: 0, lockDiff: 0, locked: false };
   // what everyone did, for advice functions (--adv) that read the others' plays: who, what, the play it was on, how many
   // cards they had, and whether the rule of playing your top single held them (the next one to play had one card)
   g.log = [];
@@ -122,7 +134,7 @@ function runRange(job) {
   if (job.swap) swapPlans = heroes.map((h) => makeSwapPlan(h));
   for (let d = job.from; d < job.to; d++) {
     const seed = (job.seed + d * 2654435761) >>> 0;
-    for (let rot = 0; rot < 4; rot++) heroes.forEach((h, i) => { const r = playGame(seed, rot, h, job.opp, swapPlans && swapPlans[i]); out[i].push([r.pts, r.win, r.info.deals, r.info.dec]); });
+    for (let rot = 0; rot < 4; rot++) heroes.forEach((h, i) => { const r = playGame(seed, rot, h, job.opp, swapPlans && swapPlans[i]); out[i].push([r.pts, r.win, r.info.deals, r.info.dec, r.info.lock, r.info.lockDiff, r.info.locked && !r.win ? 1 : 0]); });
   }
   return out;
 }
@@ -176,6 +188,8 @@ if (require.main !== module) {
       const big = pts.map((x) => (x <= -20 ? 1 : 0));
       let line = `${h.padEnd(28)} pts/game ${mean(pts).toFixed(2).padStart(6)} ± ${(sd(perDeal(pts)) / Math.sqrt(n / 4)).toFixed(2)}   win ${(100 * mean(win)).toFixed(1)}%   lose 20+ ${(100 * mean(big)).toFixed(1)}%`;
       if (dec) line += `   deals/decision ${(dl / dec).toFixed(0)}`;
+      const lk = all[i].reduce((s, x) => s + (x[4] || 0), 0);
+      if (lk) line += `   sure way out ${lk} times (other than the simulation's ${all[i].reduce((s, x) => s + (x[5] || 0), 0)}), lost after one ${all[i].reduce((s, x) => s + (x[6] || 0), 0)}`;
       if (i > 0) {
         const d = perDeal(pts).map((x, k) => x - deal0[k]);
         const dw = perDeal(win).map((x, k) => x - win0[k]);

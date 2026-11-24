@@ -372,6 +372,10 @@
       const outs = Lg.filter((c) => B.isEmpty(B.minus(g.hand[0], c.set)));
       if (outs.length) return { kind: "finish", card: outs.reduce((a, b) => (B.winnerMult(b) > B.winnerMult(a) ? b : a)), g, risky };
       if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
+      // 保證出完: your hand splits into plays nobody can beat and at most one other; played in that order you go out
+      // first whatever the others hold (no simulating needed)
+      const lock = B.lockPlan(g, 0, Lg);
+      if (lock) return { kind: "lock", card: lock.plan[0], plan: lock.plan, mult: lock.mult, g, byLit, risky: risky && lock.plan[0].type !== B.T_PASS };
       const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
       // the aim: points (ev), going out first (ev false), or points with opts.winBonus more for going out first (兼顧)
       const ev = opts.ev !== false, winBonus = ev ? opts.winBonus || 0 : 0;

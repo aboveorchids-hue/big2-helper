@@ -575,10 +575,84 @@
     return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], pts: pts[i] / Math.max(1, n[i]), n: n[i], out: !alive[i] })), pref, ms: Date.now() - t0, deals: Math.max(...n) };
   }
 
+  // ---- 保證出完: a sure way out ----
+  // Whatever the others hold (any of the cards not seen, as many as each has left), can you go out first for sure? Yes
+  // when your hand splits into plays nobody can beat (獨大) and at most one other play: lead the 獨大 plays one by one
+  // (everyone has to pass, so you lead again) and the other one last. When you must beat a play now, the first play has
+  // to be 獨大 too. 獨大 counts every bomb the others could make: 鐵支 and 同花順 beat any single, pair or 5-card play,
+  // so a ♠2 is not 獨大 while a seat with 5 or more cards could hold four of a kind or a straight flush.
+  // Returns { plan: [plays in order], mult: the last play's 倍數 (as large as it can be) } or null.
+  function lockPlan(g, p, L) {
+    const H = g.hand[p], U = unseenOf(H, g.played);
+    let most = 0;
+    for (let q = 0; q < 4; q++) if (q !== p) most = Math.max(most, count(g.hand[q]));
+    if (!most || most >= 13 || count(H) < 2) return null;
+    const bombs = [];
+    if (most >= 5 && count(U) >= 5) {
+      for (let r = 0; r < 13; r++) if (U[r] === 15) bombs.push(mk(empty(), T_QUADS, r));
+      genStraights(U, bombs, false, true);
+    }
+    const size = (c) => (c.type === T_SINGLE ? 1 : c.type === T_PAIR ? 2 : 5);
+    const boss = (c) => !bombs.some((b) => beats(b, c)) && !(size(c) <= most && [T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL].includes(c.type) && beatableBy(c, U));
+    const plays = [];
+    genSingles(H, plays); genPairs(H, plays); genStraights(H, plays, true, true); genFulls(H, plays); genQuads(H, plays);
+    const B = plays.filter(boss);
+    // every card not in some 獨大 play has to be in the one other play
+    let cov = empty();
+    for (const b of B) for (let r = 0; r < 13; r++) cov[r] |= b.set[r];
+    const rest = minus(H, cov);
+    if (count(rest) > 5) return null;
+    const within = (s, h) => { for (let r = 0; r < 13; r++) if (s[r] & ~h[r]) return false; return true; };
+    const holds = (s, h) => { for (let r = 0; r < 13; r++) if (h[r] & ~s[r]) return false; return true; };
+    // the ways to cover what is left with 獨大 plays (the lowest card first; a few dozen at most)
+    const covers = [];
+    function cover(h, acc) {
+      if (covers.length >= 48) return;
+      if (isEmpty(h)) { covers.push(acc.slice()); return; }
+      const lo = lowest(h), r = lo >> 2, bit = 1 << (lo & 3);
+      for (const b of B) if (b.set[r] & bit && within(b.set, h)) { acc.push(b); cover(minus(h, b.set), acc); acc.pop(); }
+    }
+    const lastOnes = isEmpty(rest) ? [null] : [];
+    for (const c of plays) if (holds(c.set, rest)) lastOnes.push(c);
+    const lead = g.last.type === T_PASS;
+    const inL = (c) => L.some((x) => sameCombo(x, c));
+    let best = null;
+    for (const R of lastOnes) {
+      covers.length = 0;
+      cover(R ? minus(H, R.set) : H, []);
+      for (const cv of covers) {
+        const pieces = R ? cv.concat([R]) : cv;
+        if (pieces.length < 2) continue;
+        for (const last of R ? [R] : pieces) {
+          const mid = pieces.filter((c) => c !== last);
+          for (const first of mid) {
+            if (!inL(first) || (!lead && !boss(first))) continue;
+            // the others: bigger plays first, then singles from the top (a seat down to one card makes you lead your
+            // top single), then the last one
+            const others = mid.filter((c) => c !== first).sort((a, b) => (a.type === T_SINGLE) - (b.type === T_SINGLE) || b.key - a.key);
+            const plan = [first].concat(others, [last]);
+            const mult = winnerMult(last);
+            if (best && mult <= best.mult) continue;
+            // played out with everyone else passing: every play legal when it comes, and you go out with the last
+            const x = copyGame(g);
+            let ok = true;
+            for (const c of plan) {
+              if (x.cur !== p || !genLegal(x, p).some((m) => sameCombo(m, c))) { ok = false; break; }
+              applyMove(x, c);
+              for (let k = 0; k < 4 && x.winner < 0 && x.cur !== p; k++) applyMove(x, PASS());
+            }
+            if (ok && x.winner === p) best = { plan, mult };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, lockPlan, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;
