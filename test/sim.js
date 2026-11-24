@@ -8,6 +8,9 @@ const N = +(process.argv[2] || 40), SEED = +(process.argv[3] || 7), SHOWS = proc
 // SWAP=1: a swap game (每局先換 0～3 張), with the swap's buttons read as play buttons now and then, and cards taken out
 // of your row while choosing
 const SWAP = process.env.SWAP === "1";
+// SHOWMISS=0.5: a pair shown large is read as one of its two cards that often (the rank mark of the other card lost);
+// the seat's count is then read before or after the play shown large, either way
+const SHOWMISS = +(process.env.SHOWMISS || 0);
 let a = SEED >>> 0;
 const rnd = () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const SK = [null, "right", "top", "left"];
@@ -33,7 +36,7 @@ function reading(g, pile, opt) {
   const seats = {};
   for (let q = 1; q <= 3; q++) {
     const pass = !!(g.passed >> q & 1) && g.last.type !== B.T_PASS;
-    const unread = rnd() < 0.08 || (opt.busy && q === opt.who) || (ONE_UNREAD && B.count(g.hand[q]) === 1);
+    const unread = rnd() < 0.08 || (opt.busy && q === opt.who && !opt.early) || (ONE_UNREAD && B.count(g.hand[q]) === 1);
     seats[SK[q]] = { count: unread ? null : B.count(g.hand[q]), p: unread ? 0 : 0.97, pass, gold: 0, ps: 0 };
   }
   const p = { n: pile ? pile.ids.length : 0, busy: false, displays: [] };
@@ -49,7 +52,7 @@ function reading(g, pile, opt) {
     p.displays.push(d);
   }
   const lit = myTurn ? litOf(g) : ids.map(() => rnd() < 0.5);
-  const shows = opt.busy && opt.who && opt.disp && SHOWS && rnd() < 0.9 ? [{ seat: opt.who, cards: opt.disp.slice(), sure: true }] : [];
+  const shows = opt.busy && opt.who && opt.disp && SHOWS && rnd() < 0.9 ? [{ seat: opt.who, cards: (opt.miss ? opt.miss : opt.disp).slice(), sure: true }] : [];
   return { hand: { cards: ids, sure: ids.map(() => true), lit, geoOk: true, n: ids.length, why: "" }, seats, pile: p, shows, myTurn, raised: false };
 }
 
@@ -152,7 +155,10 @@ for (let gi = 0; gi < N; gi++) {
     B.applyMove(g, move);
     if (move.type !== B.T_PASS) pile = { ids: B.toIds(move.set) };
     // the play shown large for a moment, then the table settles
-    if (move.type !== B.T_PASS) for (let i = 0; i < 2; i++) feed(reading(g, pile, { busy: true, who: p, disp: B.toIds(move.set) }));
+    // (SHOWMISS: a pair of the others' read as one of its cards, the count read during the display or only after it)
+    let miss = null, early = false;
+    if (SHOWMISS && p !== 0 && move.type === B.T_PAIR) { if (rnd() < SHOWMISS) { miss = [B.toIds(move.set)[rnd() < 0.5 ? 0 : 1]]; tally.pairMiss = (tally.pairMiss || 0) + 1; } early = rnd() < 0.5; }
+    if (move.type !== B.T_PASS) for (let i = 0; i < 2; i++) feed(reading(g, pile, { busy: true, who: p, disp: B.toIds(move.set), miss, early }));
     settle(g.cur === 0 ? 5 : 2);
   }
   // singles of the others the tracker knew by the end
@@ -165,5 +171,6 @@ console.log(`lead right ${pct(tally.leadOk, tally.turns)}, owner right ${pct(tal
 console.log(`play to beat: owner ${tally.ownerOk}, size right ${tally.sizeOk}; singles known ${pct(tally.singleKnown, tally.singleTot)} (wrong ${tally.singleWrong})`);
 console.log(`counts right ${pct(tally.countOk, tally.countTot)}, cards wrongly marked played ${tally.playedWrong}`);
 console.log(`risky ${tally.risky || 0}; advice not legal ${tally.advIllegal}, PASS when you lead ${tally.advPassWhenLead}`);
+if (SHOWMISS) console.log(`pairs shown large read as one card: ${tally.pairMiss || 0}`);
 if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps - (tally.misreadDeals || 0)} (+${tally.misreadDeals || 0} with a card of the row dealt misread); you lead first and had to wait out the swap ${tally.waited || 0} (nobody swapped: ${tally.waitedNobody || 0})`);
 if (tally.misses.length) console.log(tally.misses.slice(0, 15).join("\n"));

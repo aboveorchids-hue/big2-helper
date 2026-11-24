@@ -195,7 +195,18 @@
     for (let i = k + 1; i < evs.length; i++) if (evs[i].k === "pass") passed.add(evs[i].s);
     for (let q = 1; q <= 3; q++) if (o.pass[q]) passed.add(q);
     if (lp.s === 0) return { lead: true, passed: [...passed] };
-    return { owner: lp.s, n: lp.n, c: lp.c || null, passed: [...passed] };
+    return { owner: lp.s, n: lp.n, c: lp.c || null, part: lp.part || null, passed: [...passed] };
+  }
+  // live: the newest play at seat q, when it was counted from the play shown large (its count not seen then) a moment
+  // ago, no count seen agreeing with it since, and nothing of yours played after it
+  const SHOW_FIX = 5000, SEATW = ["你", "下家", "對家", "上家"];
+  function shownPlay(S, q, now) {
+    for (let i = S.events.length - 1; i >= 0; i--) {
+      const e = S.events[i];
+      if (e.k === "play") return null;
+      if (e.k === "count" && e.s === q) return e.fromShow && !e.confirmed && now != null && e.t != null && now - e.t <= SHOW_FIX ? e : null;
+    }
+    return null;
   }
 
   // apply one screenshot's reading; returns { S, err?, notes[] }
@@ -242,10 +253,32 @@
     for (let q = 1; q <= 3; q++) {
       let c = o.counts[q];
       if (!opts.live && c == null && o.craw[q] != null && o.cp[q] >= 0.55 && o.craw[q] <= S.counts[q]) { c = o.craw[q]; o.counts[q] = c; }
+      // live: the play just shown large at this seat was counted by itself, and now its count says it was more cards: it
+      // was read short where it was shown large (a rank mark lost). The count says how many cards it was; the cards read
+      // are part of it. (A count agreeing with it confirms it.)
+      if (c != null && opts.live && !fresh) {
+        const F = shownPlay(S, q, opts.now);
+        if (F && c === S.counts[q]) F.confirmed = true;
+        const n2 = F && c < S.counts[q] ? F.n + S.counts[q] - c : 0;
+        if (F && [2, 5].includes(n2) && F.c && F.c.length < n2) {
+          F.part = F.c; F.c = null; F.n = n2; F.fixed = true; F.confirmed = true;
+          notes.push(`${SEATW[q]}放大的牌只讀到 ${F.part.length} 張，張數卻少了 ${n2} 張：照張數算`);
+          S.counts[q] = c; S.fresh[q] = true; S.est[q] = false; S.countAt[q] = S.shots;
+          continue;
+        }
+      }
       // live: a count never goes up during a hand, so a higher one is a misreading (something lying over the badge)
       if (c != null && opts.live && !fresh && c > S.counts[q]) c = null;
       if (c == null) { S.fresh[q] = false; continue; }
-      if (!fresh && c < S.counts[q]) { drop[q] = S.counts[q] - c; ev(S, { k: "count", s: q, n: drop[q] }); }
+      if (!fresh && c < S.counts[q]) {
+        drop[q] = S.counts[q] - c;
+        // live: the others play in turn (下家, 對家, 上家) after you; a count seen late goes before a play already counted
+        // from what a later seat showed large since your last turn
+        const e = { k: "count", s: q, n: drop[q], at: S.shots };
+        let k = S.events.length;
+        if (opts.live) for (let i = S.events.length - 1; i >= 0; i--) { const y = S.events[i]; if (y.k === "play" || y.k === "turn") break; if (y.k === "count" && y.fromShow && y.s > q) k = i; }
+        S.events.splice(k, 0, e);
+      }
       S.counts[q] = c; S.fresh[q] = true; S.est[q] = false; S.countAt[q] = S.shots;
     }
     // 4. the newest play on the table, and whose it is
@@ -284,15 +317,20 @@
     S.round = null;
     const view = { myTurn: o.myTurn, buttons, pass: o.pass.slice(), pile: o.pile, owner: null, lit: o.lit.slice() };
     if (o.myTurn) {
+      // live: part of the play to beat read where it was shown large (the rest of its cards lost there)
+      const part = LV && LV.owner != null && LV.owner === owner && LV.part ? LV.part : null;
       // cards known to be out of play, except the one on the table now (it may have been read on an earlier screenshot)
-      const gone = S.played.filter((c) => c !== pileCard);
+      // and those of the play to beat read in part
+      const gone = S.played.filter((c) => c !== pileCard && !(part && part.includes(c)));
       const allThirteen = [1, 2, 3].every((q) => S.counts[q] === 13);
       const first = hand.length === 13 && hand.includes(0) && allThirteen;
       let lead = first || (LV ? !!LV.lead : o.pile.n === 0 || owner == null) || owner == null;
       let top = null;
       if (!lead) {
         // live: the play as read where it was shown large (or matched to its owner's count before): nothing to work out
-        const shown0 = LV && LV.owner === owner && LV.c && [1, 2, 5].includes(LV.c.length) ? LV.c : opts.show && opts.show.seat === owner ? opts.show.cards : null;
+        // (the play shown large only when it is as many cards as its owner was seen putting down)
+        const showOk = opts.show && opts.show.seat === owner && !(LV && LV.owner === owner && LV.n !== opts.show.cards.length) && !(drop[owner] > 0 && drop[owner] !== opts.show.cards.length);
+        const shown0 = LV && LV.owner === owner && LV.c && [1, 2, 5].includes(LV.c.length) ? LV.c : showOk ? opts.show.cards : null;
         const shown = shown0 && classify(shown0) ? shown0 : null;
         let inf = null;
         if (shown) top = { s: owner, n: shown.length, c: shown.slice(), read: null, shown: true };
@@ -312,7 +350,13 @@
           n = fit.includes(dn) ? dn : fit.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
         }
         inf = infs[n];
+        // a pair read in part: of the plays the lit cards allow, the pairs of that rank (when there are any)
+        if (part && n === 2 && part.length === 1 && LV.n === 2) {
+          const f = inf.list.filter((t) => t.type === B.T_PAIR && (t.key >> 2) === (part[0] >> 2) && t.key >= part[0]);
+          if (f.length) inf = Object.assign({}, inf, { list: f });
+        }
         top = { s: owner, n, c: null, read: null };
+        if (part && LV.n === n) top.part = part.slice();
         if (pileCard != null && n === 1) {
           const t = { type: B.T_SINGLE, key: pileCard };
           const fits = inf.list.some((x) => sameTop(x, t));

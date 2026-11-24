@@ -151,22 +151,23 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
       <div class="actions" style="margin-top:10px">
         <button class="btn small" id="copyBtn" type="button">複製紀錄</button>
         <button class="btn small" id="saveBtn" type="button">存下目前畫面</button>
+        <button class="btn small" id="badBtn" type="button" hidden>存下讀錯的出牌畫面</button>
       </div>
       <textarea id="copyBox" hidden readonly aria-label="紀錄"></textarea>
       <pre id="log"></pre>
     </details>
   </section>
 </main>
-<script src="models.js?v=b14"></script>
-<script src="read.js?v=b14"></script>
-<script src="engine.js?v=b14"></script>
-<script src="state.js?v=b14"></script>
-<script src="live.js?v=b14"></script>
-<script src="swap.js?v=b14"></script>
+<script src="models.js?v=b15"></script>
+<script src="read.js?v=b15"></script>
+<script src="engine.js?v=b15"></script>
+<script src="state.js?v=b15"></script>
+<script src="live.js?v=b15"></script>
+<script src="swap.js?v=b15"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b14";
+const VERSION = "b15";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -246,7 +247,7 @@ function renderAdvice(r) {
       `<br><span class="sub">模擬 ${t.n} 局${r.winBonus ? `・兼顧：贏一局另加 ${r.winBonus} 分來比` : ""}</span>`;
   }
   const warn = [];
-  if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}沒有逐張讀，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
+  if (R.top && !R.top.c) warn.push(`${SEAT[R.top.s]}出的${SIZE_NAME[R.top.n] || R.top.n + " 張"}${R.top.part ? `只讀到其中的 ${esc(comboText(R.top.part))}` : "沒有逐張讀"}，照遊戲裡你亮著的牌推算${R.top.guess ? "（" + esc(R.top.guess) + "）" : ""}`);
   if (r.risky) warn.push("照你亮著的牌看不出這手一定壓得過；遊戲不讓你出的話，就按 PASS");
   const alts = r.kind === "sim" ? r.stats.slice(1, 4).map((s) => `<div class="alt"><span>${s.card.type === B.T_PASS ? "PASS" : `<b>${esc(comboText(idsOf(s.card)))}</b>`}</span><span>${r.ev ? `${fmtPts(s.pts)} 分・${pct(s)}` : `${pct(s)}・${fmtPts(s.pts)} 分`}</span></div>`).join("") : "";
   bodyHTML = `<p class="who">${topText(R)}</p>` +
@@ -512,10 +513,28 @@ function showNoPlay() {
   bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>`;
   hasAdvice = true; shownTurn = null; old = false; setState("輪到你", "turn"); paint();
 }
+// ---------- a play shown large read as more or fewer cards than its owner put down ----------
+// The count says how many cards it was (the tracker goes by it); the log says what was read where, and the newest frame
+// that showed a play large at that seat is kept, to be saved and looked at.
+const showShot = [null, null, null, null];
+let badShot = null;
+function keepShowShot(t) {
+  const sh = t && t.res && t.res.shows;
+  if (!sh || !sh.length || !t.img) return;
+  for (const x of sh) showShot[x.seat] = { img: t.img, at: Date.now() };
+}
+function noteBad(b) {
+  const marks = b.marks && b.marks.length ? `｜讀到的點數 ${b.marks.map((m) => `${cardName(m.card)}@${m.X},${m.Y}${m.in ? "" : "（範圍外）"} ${m.r}`).join("、")}` : "";
+  log(b.long
+    ? `${SEAT[b.seat]}放大的牌讀到 ${b.cards.length} 張（${comboText(b.cards)}），張數看到少的比較少：照放大的牌算${marks}`
+    : `${SEAT[b.seat]}放大的牌只讀到 ${b.cards.length ? comboText(b.cards) : "?"}，張數卻少了 ${b.n} 張：照張數算${marks}`);
+  if (!b.long && showShot[b.seat]) { badShot = showShot[b.seat]; $("badBtn").hidden = false; }
+}
 function onReading(res, from) {
   if (res && res.myTurn && res.noPlay) { if (!noPlayTurn) { noPlayTurn = true; showNoPlay(); beep(true); log("遊戲顯示沒有更大的牌：PASS"); } }
   else if (res && !res.myTurn) noPlayTurn = false;
   const st = live.process(res, Date.now());
+  if (st.bad) for (const b of st.bad) noteBad(b);
   if (noPlayTurn && res.myTurn) return st;
   if (st.hold) res = Object.assign({}, res, { myTurn: false });
   // 換牌局: the swap's advice while it is open; turned on mid-hand, the swap of the hand on screen
@@ -771,6 +790,7 @@ function tick() {
   R.ms.push(Math.round(performance.now() - r0)); if (R.ms.length > 50) R.ms.shift();
   R.reads++; lastRead = performance.now();
   renderStatus();
+  keepShowShot(t);
   const st = onReading(t.res, from);
   wantMore = st.status === "settling" || st.status === "busy" || st.status === "odd";
   if (wantMore && worker) worker.postMessage({ want: true });
@@ -796,7 +816,7 @@ async function fromFile(file) {
   finally { busy = false; }
 }
 // for testing without a shared screen: feed a picture as if it came from the stream
-window.__feed = async (blob) => { const bmp = await createImageBitmap(blob); const t = readFrame(bmp, bmp.width, bmp.height); const st = onReading(t.res, "測試"); return { status: st.status, state: stateTxt, text: $("advice").innerText }; };
+window.__feed = async (blob) => { const bmp = await createImageBitmap(blob); const t = readFrame(bmp, bmp.width, bmp.height); keepShowShot(t); const st = onReading(t.res, "測試"); return { status: st.status, state: stateTxt, text: $("advice").innerText }; };
 window.__live = live; window.__onReading = onReading;
 
 $("startBtn").addEventListener("click", start);
@@ -812,6 +832,20 @@ $("copyBtn").addEventListener("click", () => {
   const fallback = () => { box.hidden = false; box.value = text; box.select(); };
   try { navigator.clipboard.writeText(text).then(() => { box.hidden = true; $("copyBtn").textContent = "已複製"; setTimeout(() => { $("copyBtn").textContent = "複製紀錄"; }, 3000); }, fallback); }
   catch (e) { fallback(); }
+});
+$("badBtn").addEventListener("click", () => {
+  if (!badShot) return;
+  const c = document.createElement("canvas");
+  c.width = badShot.img.width; c.height = badShot.img.height;
+  c.getContext("2d").putImageData(badShot.img, 0, 0);
+  c.toBlob((b) => {
+    if (!b) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = `big2-bad-${badShot.at}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    log("存下讀錯的出牌畫面");
+  }, "image/png");
 });
 $("saveBtn").addEventListener("click", () => {
   if (!cv.width) { log("還沒有畫面可以存"); return; }

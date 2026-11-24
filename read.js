@@ -1381,7 +1381,9 @@ const B2Read = (() => {
       if (!cards.length) continue;
       const ids = cards.map((c) => c.card);
       const sure = cards.every((c) => c.rTop >= 0.85 && c.rMargin >= 0.03 && c.colourSure && Math.abs(c.z) >= 0.3) && new Set(ids).size === ids.length;
-      out.push({ seat: SEATOF[k], cards: ids, sure, conf: Math.min(...cards.map((c) => c.rTop)) });
+      // (marks: every rank mark read in the seat's box, and whether it lay where that seat's play is shown; for the log
+      // when the play read does not fit its owner's count)
+      out.push({ seat: SEATOF[k], cards: ids, sure, conf: Math.min(...cards.map((c) => c.rTop)), marks: all.map((c) => ({ card: c.card, X: Math.round(c.X), Y: Math.round(c.Y), in: SHOWZONE[k](c.X, c.Y), r: Math.round(100 * c.rTop) / 100 })) });
     }
     return out;
   }

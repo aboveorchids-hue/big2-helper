@@ -44,7 +44,7 @@
   const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null, swapMode: false };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null, swapMode: false, bad: [] };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -81,7 +81,7 @@
         const key = sh.seat + ":" + sh.cards.slice().sort((a, b) => a - b).join(",");
         // the same play seen again (or read a little differently a moment later)
         if (L.shows.some((x) => x.key === key || (x.seat === sh.seat && now - x.at < SHOW_SAME && x.cards.length === sh.cards.length && x.cards.filter((c) => sh.cards.includes(c)).length * 2 >= sh.cards.length))) continue;
-        L.shows.push({ key, seat: sh.seat, cards: sh.cards.slice(), at: now, used: false });
+        L.shows.push({ key, seat: sh.seat, cards: sh.cards.slice(), at: now, used: false, marks: sh.marks || null });
         for (const c of sh.cards) if (!L.S.played.includes(c)) L.S.played.push(c);
         // a single seen on the table too is the same card
         for (const x of L.seen) if (sh.cards.includes(x.card)) x.show = true;
@@ -93,13 +93,30 @@
       // first the plays shown large: a count going down by as many cards at the same seat, close in time. A play shown
       // large with no count seen going down (the badge hidden, or not readable at one card left) counts by itself: the
       // seat's count goes down by it now, so the badge read later shows nothing new.
+      // A count at the same seat going down close in time by a different number of cards is the same play. Shown large
+      // as fewer cards: read short there (a rank mark lost); the count says how many cards it was, the cards read are
+      // part of it, and the play shown large is not used (it would count the play twice). Shown large as more cards (a
+      // whole play of 2 or 5 read surely is hard to get by mistake): the count was seen part way, or was not a play;
+      // the play shown large stands, the count going down by it.
       for (const x of L.shows) {
         if (x.used) continue;
-        const e = S.events.find((y) => y.k === "count" && y.s === x.seat && y.n === x.cards.length && !y.byShow && y.t != null && Math.abs(y.t - x.at) <= SHOW_PAIR);
+        const near = (y) => y.k === "count" && y.s === x.seat && !y.byShow && y.t != null && Math.abs(y.t - x.at) <= SHOW_PAIR;
+        const e = S.events.find((y) => near(y) && y.n === x.cards.length);
+        const odd = e ? null : S.events.find((y) => near(y) && y.n !== x.cards.length);
         if (e) {
           if (e.c) for (const c of e.c) { const z = L.seen.find((w) => w.card === c); if (z && !x.cards.includes(c)) z.used = false; }
           e.c = x.cards.slice(); e.byShow = true; x.used = true;
           for (const c of x.cards) { const z = L.seen.find((w) => w.card === c); if (z) z.used = true; }
+        } else if (odd && x.cards.length < odd.n) {
+          x.used = true; x.odd = true;
+          if (!odd.c) odd.part = x.cards.slice();
+          L.bad.push({ seat: x.seat, cards: x.cards.slice(), n: odd.n, marks: x.marks });
+        } else if (odd && S.counts[x.seat] >= x.cards.length - odd.n) {
+          if (odd.c) for (const c of odd.c) { const z = L.seen.find((w) => w.card === c); if (z && !x.cards.includes(c)) z.used = false; }
+          S.counts[x.seat] -= x.cards.length - odd.n; S.countAt[x.seat] = S.shots;
+          odd.n = x.cards.length; odd.c = x.cards.slice(); odd.byShow = true; x.used = true;
+          for (const c of x.cards) { const z = L.seen.find((w) => w.card === c); if (z) z.used = true; }
+          L.bad.push({ seat: x.seat, cards: x.cards.slice(), n: x.cards.length, long: true, marks: x.marks });
         } else if (now != null && S.my && S.counts[x.seat] >= x.cards.length) {
           S.counts[x.seat] -= x.cards.length; S.countAt[x.seat] = S.shots;
           S.events.push({ k: "count", s: x.seat, n: x.cards.length, c: x.cards.slice(), at: S.shots, t: x.at, byShow: true, fromShow: true, pend: true });
@@ -210,7 +227,21 @@
 
     // one reading; returns { status, why?, turn?, notes?, swapStart?, swapDone? }
     // status: applied | same | settling | busy | unread | odd | err | swapping
+    // a reading; returns its status, with `bad`: the plays shown large that were read as more or fewer cards than their
+    // owner put down (seat, cards read, how many it was, where the marks were read), for the log
     function process(r, now) {
+      L.bad = [];
+      const st = process1(r, now);
+      for (const e of L.S.events) if (e.fixed && !e.told) {
+        e.told = true;
+        const x = L.shows.find((y) => y.seat === e.s && y.at === e.t);
+        if (x) x.odd = true;
+        L.bad.push({ seat: e.s, cards: (e.part || []).slice(), n: e.n, marks: x ? x.marks : null });
+      }
+      if (L.bad.length) st.bad = L.bad;
+      return st;
+    }
+    function process1(r, now) {
       now = now == null ? Date.now() : now;
       noteDisplays(r, now);
       noteShows(r, now);
@@ -279,7 +310,7 @@
       const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
       const lastShow = L.shows.length ? L.shows[L.shows.length - 1] : null;
       const show = lastShow && !lastShow.used && now - lastShow.at < MATCH_BEFORE ? { seat: lastShow.seat, cards: lastShow.cards } : null;
-      const out = ST.apply(L.S, r, { live: true, disp: dispFor(now), recent, show, handT: L.handT });
+      const out = ST.apply(L.S, r, { live: true, now, disp: dispFor(now), recent, show, handT: L.handT });
       if (out.err) return { status: "err", why: out.err };
       const S = out.S;
       // a display that was used up (that seat's count went down) is forgotten
