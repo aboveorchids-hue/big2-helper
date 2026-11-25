@@ -172,15 +172,25 @@
 
   // ---------- the state of one hand (deal) ----------
   function blank() {
-    return { v: 2, deal: 0, shots: 0, my: null, hand0: null, counts: [0, 13, 13, 13], fresh: [true, false, false, false], played: [], guess: [], countAt: [0, -1, -1, -1], est: [false, false, false, false], events: [], lastTurnAt: -1, prevTurnAt: -1, turnCounts: null, view: null, round: null };
+    return { v: 2, deal: 0, shots: 0, my: null, hand0: null, counts: [0, 13, 13, 13], fresh: [true, false, false, false], played: [], guess: [], countAt: [0, -1, -1, -1], est: [false, false, false, false], unk: [false, false, false, false], events: [], lastTurnAt: -1, prevTurnAt: -1, turnCounts: null, view: null, round: null };
   }
   function newDeal(S, o, hand) {
     const n = blank();
     n.deal = S.deal + 1; n.shots = S.shots;
     n.my = hand.slice(); n.hand0 = hand.length === 13 ? hand.slice() : null;
-    for (let q = 1; q <= 3; q++) { n.counts[q] = o.counts[q] != null ? o.counts[q] : hand.length === 13 ? 13 : hand.length; n.fresh[q] = o.counts[q] != null; n.countAt[q] = o.counts[q] != null ? n.shots : -1; }
+    // (a deal picked up part way: a count not read is only a guess, unk, until it is read)
+    for (let q = 1; q <= 3; q++) { n.counts[q] = o.counts[q] != null ? o.counts[q] : hand.length === 13 ? 13 : hand.length; n.fresh[q] = o.counts[q] != null; n.countAt[q] = o.counts[q] != null ? n.shots : -1; n.unk[q] = o.counts[q] == null && hand.length !== 13; }
     n.counts[0] = hand.length;
     return n;
+  }
+  // live: still the same deal as the cards you had? Nothing the others were seen to play is in your row, and no count
+  // read now is higher than before (counts only go down during a deal).
+  function sameDeal(S, o, hand) {
+    const mine = new Set();
+    for (const e of S.events) if (e.k === "play") for (const c of e.c) mine.add(c);
+    if (hand.some((c) => S.played.includes(c) && !mine.has(c))) return false;
+    for (let q = 1; q <= 3; q++) if (o.counts[q] != null && o.counts[q] > S.counts[q]) return false;
+    return true;
   }
   const ev = (S, e) => { e.at = S.shots; S.events.push(e); };
 
@@ -227,10 +237,21 @@
     if (!al) {
       if (o.unsure > 0 && S.my && o.guess.length < 13) return { S: S0, err: `手牌和上一張對不起來，而且有 ${o.unsure} 張看不清` };
       hand = o.guess.slice();
-      if (S.my) notes.push(o.guess.length === 13 ? "新的一局" : "手牌和前一張對不起來，從這張重新算");
-      S = newDeal(S, o, hand);
-      S.guess = o.guess.filter((c, i) => !o.sure[i]);
-      fresh = true;
+      if (opts.live && opts.resync && S.my && S.my.length && hand.length < 13 && hand.length <= S.my.length && sameDeal(S, o, hand)) {
+        // live: your row read differently from the cards you had, but still this deal: only your row is put right.
+        // What was seen played and every count stay; your plays recorded with cards that are in your row again were
+        // misread (those cards are taken out of them).
+        notes.push("手牌和前一張對不起來，只重抓你的手牌（記牌和各家張數照舊）");
+        for (const e of S.events) if (e.k === "play") { e.c = e.c.filter((c) => !hand.includes(c)); e.n = e.c.length; }
+        S.events = S.events.filter((e) => e.k !== "play" || e.c.length);
+        S.played = S.played.filter((c) => !hand.includes(c));
+        S.guess = o.guess.filter((c, i) => !o.sure[i]);
+      } else {
+        if (S.my) notes.push(o.guess.length === 13 ? "新的一局" : "手牌和前一張對不起來，從這張重新算");
+        S = newDeal(S, o, hand);
+        S.guess = o.guess.filter((c, i) => !o.sure[i]);
+        fresh = true;
+      }
     } else {
       hand = al.hand;
       const before = (S.guess || []).length;
@@ -253,6 +274,9 @@
     for (let q = 1; q <= 3; q++) {
       let c = o.counts[q];
       if (!opts.live && c == null && o.craw[q] != null && o.cp[q] >= 0.55 && o.craw[q] <= S.counts[q]) { c = o.craw[q]; o.counts[q] = c; }
+      // a count only guessed so far (a deal picked up part way, that seat's count not read then): the first one read is
+      // taken as it is, not as a play
+      if (c != null && !fresh && S.unk && S.unk[q]) { S.unk[q] = false; S.counts[q] = c; S.fresh[q] = true; S.est[q] = false; S.countAt[q] = S.shots; continue; }
       // live: the play just shown large at this seat was counted by itself, and now its count says it was more cards: it
       // was read short where it was shown large (a rank mark lost). The count says how many cards it was; the cards read
       // are part of it. (A count agreeing with it confirms it.)

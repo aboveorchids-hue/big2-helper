@@ -11,6 +11,10 @@ const SWAP = process.env.SWAP === "1";
 // SHOWMISS=0.5: a pair shown large is read as one of its two cards that often (the rank mark of the other card lost);
 // the seat's count is then read before or after the play shown large, either way
 const SHOWMISS = +(process.env.SHOWMISS || 0);
+// ROWMISS=0.3: after your play, that often a reading or two with 1 to 3 more of your cards hidden (your play shown large
+// over your row, a card moving); HANDMIS=0.1: at your turn, that often one card of your row read as another card (one
+// the others hold) for a few readings, then right again
+const ROWMISS = +(process.env.ROWMISS || 0), HANDMIS = +(process.env.HANDMIS || 0);
 let a = SEED >>> 0;
 const rnd = () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const SK = [null, "right", "top", "left"];
@@ -57,7 +61,7 @@ function reading(g, pile, opt) {
 }
 
 const tally = { games: 0, turns: 0, leadOk: 0, ownerOk: 0, sizeOk: 0, singleKnown: 0, singleTot: 0, singleWrong: 0, advIllegal: 0, advPassWhenLead: 0,
-  countOk: 0, countTot: 0, playedWrong: 0, oppSingles: 0, oppSinglesSeen: 0, misses: [] };
+  countOk: 0, countTot: 0, playedWrong: 0, oppSingles: 0, oppSinglesSeen: 0, misses: [], myOk: 0, playedKnown: 0, playedTot: 0 };
 const sameSet = (x, y) => B.sameSet(x.set, y.set);
 let clock = 0;
 for (let gi = 0; gi < N; gi++) {
@@ -126,6 +130,15 @@ for (let gi = 0; gi < N; gi++) {
   while (g.winner < 0 && steps++ < 200) {
     const p = g.cur;
     let move;
+    if (p === 0 && HANDMIS && rnd() < HANDMIS) {
+      // one card of your row read as a card the others hold, for a few readings
+      const ids = B.toIds(g.hand[0]), theirs = [1, 2, 3].flatMap((q) => B.toIds(g.hand[q]));
+      const y = ids[Math.floor(rnd() * ids.length)], x = theirs[Math.floor(rnd() * theirs.length)];
+      const bad = ids.map((c) => (c === y ? x : c)).sort((a, b) => a - b);
+      for (let i = 0; i < 5; i++) { const r = reading(g, pile, {}); r.hand = Object.assign({}, r.hand, { cards: bad, sure: bad.map(() => true), lit: bad.map(() => true), n: bad.length }); feed(r); }
+      settle(5);
+      tally.handMis = (tally.handMis || 0) + 1;
+    }
     if (p === 0) {
       const st = live.S;
       if (st.round) {
@@ -139,6 +152,8 @@ for (let gi = 0; gi < N; gi++) {
           if (n === 1) { tally.singleTot++; if (R.top.c) { tally.singleKnown++; if (R.top.c[0] !== B.toIds(g.last.set)[0]) tally.singleWrong++; } }
         }
         for (let q = 1; q <= 3; q++) { tally.countTot++; if (st.counts[q] === B.count(g.hand[q])) tally.countOk++; }
+        if (st.my && B.sameSet(B.fromIds(st.my), g.hand[0])) tally.myOk++;
+        for (const c of B.toIds(g.played)) { tally.playedTot++; if (st.played.includes(c)) tally.playedKnown++; }
         for (const c of st.played) if (!B.has(g.played, c)) tally.playedWrong++;
         const adv = live.advise({ W: M.W, nDet: 12, maxCand: 4 });
         if (adv) {
@@ -159,6 +174,15 @@ for (let gi = 0; gi < N; gi++) {
     let miss = null, early = false;
     if (SHOWMISS && p !== 0 && move.type === B.T_PAIR) { if (rnd() < SHOWMISS) { miss = [B.toIds(move.set)[rnd() < 0.5 ? 0 : 1]]; tally.pairMiss = (tally.pairMiss || 0) + 1; } early = rnd() < 0.5; }
     if (move.type !== B.T_PASS) for (let i = 0; i < 2; i++) feed(reading(g, pile, { busy: true, who: p, disp: B.toIds(move.set), miss, early }));
+    if (ROWMISS && p === 0 && move.type !== B.T_PASS && B.count(g.hand[0]) > 1 && rnd() < ROWMISS) {
+      // your row with 1 to 3 more cards hidden, for two readings
+      const ids = B.toIds(g.hand[0]), k = 1 + Math.floor(rnd() * Math.min(3, ids.length - 1)), hide = new Set();
+      while (hide.size < k) hide.add(ids[Math.floor(rnd() * ids.length)]);
+      const r = reading(g, pile, {}), keep = ids.filter((c) => !hide.has(c));
+      r.hand = Object.assign({}, r.hand, { cards: keep, sure: keep.map(() => true), lit: keep.map(() => false), n: keep.length });
+      feed(r); feed(Object.assign({}, r));
+      tally.rowMiss = (tally.rowMiss || 0) + 1;
+    }
     settle(g.cur === 0 ? 5 : 2);
   }
   // singles of the others the tracker knew by the end
@@ -172,5 +196,6 @@ console.log(`play to beat: owner ${tally.ownerOk}, size right ${tally.sizeOk}; s
 console.log(`counts right ${pct(tally.countOk, tally.countTot)}, cards wrongly marked played ${tally.playedWrong}`);
 console.log(`risky ${tally.risky || 0}; advice not legal ${tally.advIllegal}, PASS when you lead ${tally.advPassWhenLead}`);
 if (SHOWMISS) console.log(`pairs shown large read as one card: ${tally.pairMiss || 0}`);
+if (ROWMISS || HANDMIS) console.log(`your row read short ${tally.rowMiss || 0} times, a card of it misread ${tally.handMis || 0} times: your row right ${pct(tally.myOk, tally.turns)} of your turns, cards played known ${pct(tally.playedKnown, tally.playedTot)}`);
 if (SWAP) console.log(`swaps read right ${tally.swapOk || 0}/${tally.swaps - (tally.misreadDeals || 0)} (+${tally.misreadDeals || 0} with a card of the row dealt misread); you lead first and had to wait out the swap ${tally.waited || 0} (nobody swapped: ${tally.waitedNobody || 0})`);
 if (tally.misses.length) console.log(tally.misses.slice(0, 15).join("\n"));

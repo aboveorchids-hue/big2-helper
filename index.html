@@ -158,16 +158,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b16"></script>
-<script src="read.js?v=b16"></script>
-<script src="engine.js?v=b16"></script>
-<script src="state.js?v=b16"></script>
-<script src="live.js?v=b16"></script>
-<script src="swap.js?v=b16"></script>
+<script src="models.js?v=b17"></script>
+<script src="read.js?v=b17"></script>
+<script src="engine.js?v=b17"></script>
+<script src="state.js?v=b17"></script>
+<script src="live.js?v=b17"></script>
+<script src="swap.js?v=b17"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b16";
+const VERSION = "b17";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -479,7 +479,7 @@ function eventsText(evs) {
     if (e.k === "pass") return `${SEAT[e.s]} PASS`;
     if (e.k === "turn") return e.lead ? "輪到你先出" : `輪到你：要壓${SEAT[e.top.s]}的 ${e.top.c ? comboText(e.top.c) : e.top.n + " 張"}`;
     return "";
-  }).filter(Boolean).join("、");
+  }).filter((t, i, a) => t && !a.slice(0, i).includes(t)).join("、");   // (each said once: a turn read twice is one turn)
 }
 // what was played, seat by seat, and the cards not seen yet (closed unless opened)
 function renderTrack() {
@@ -508,7 +508,7 @@ function readingText(r) {
 }
 
 // ---------- one reading ----------
-let lastUnread = "", lastShots = 0;
+let lastUnread = "", lastOdd = "", lastShots = 0;
 let noPlayTurn = false;
 function showNoPlay() {
   bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>`;
@@ -552,7 +552,8 @@ function onReading(res, from) {
     return st;
   }
   lastUnread = "";
-  if (st.status === "odd") { log(`${st.why}：${readingText(res)}`); return st; }
+  if (st.status === "odd") { const t = `${st.why}：${readingText(res)}`; if (t !== lastOdd) { lastOdd = t; log(t); } return st; }
+  lastOdd = "";
   if (st.status === "err") { log(`讀到了但用不上：${st.why}`); return st; }
   if (st.status !== "applied") {
     if (res.shows && res.shows.length) renderTrack();

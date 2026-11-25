@@ -10,6 +10,8 @@
   const DISP_MS = 9000;          // a single read off the large display counts for this long
   const BUSY_MS = 4000;          // the table counts as moving for at most this long (then it is read anyway)
   const ODD_N = 4;               // a hand that does not fit the one before is taken after this many readings agree on it
+  const PLAY_WAIT = 6000;        // cards gone from your row that make no hand: taken only after they stay gone this long
+  const RESYNC_GAP = 20000;      // a row that does not fit is put right within the deal only this soon after the last reading
   const WAIT_N = 1;              // at your turn, readings to wait for every count to be read (1: none, the plays shown large say who played)
 
   const sameList = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
@@ -44,7 +46,7 @@
   const busyOf = (r) => !!(r && r.pile && r.pile.busy);
 
   function create() {
-    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null, swapMode: false, bad: [] };
+    const L = { S: ST.blank(), ring: [], lastO: null, waitCount: 0, seen: [], shows: [], handT: null, disp: [null, null, null, null], busySince: 0, odd: null, swapMode: false, bad: [], lastApplied: null };
 
     function noteDisplays(r, now) {
       const ds = (r && r.pile && r.pile.displays) || [];
@@ -284,11 +286,24 @@
       // who played last
       if (o.myTurn && [1, 2, 3].some((q) => o.counts[q] == null && !o.pass[q]) && ++L.waitCount < WAIT_N) return { status: "settling", why: "等看清楚各家張數" };
       L.waitCount = 0;
-      // a hand that does not fit the cards you had: a misreading, unless it keeps coming back (a new hand of 13 is fine)
-      if (L.S.my && o.guess.length !== 13 && !ST.align(L.S.my, L.S.guess, o.guess, o.sure)) {
-        const k = o.guess.join(",");
-        L.odd = L.odd && L.odd.k === k ? { k, n: L.odd.n + 1 } : { k, n: 1 };
-        if (L.odd.n < ODD_N) return { status: "odd", why: "手牌和之前的對不起來", swapNote, swapDone: L.swapDone };
+      // a hand that does not fit the cards you had: a misreading, unless it keeps coming back (a new hand of 13 is fine).
+      // One that fits, but what left it is not one play (1, 2 or 5 cards making a hand): cards of your row hidden for a
+      // moment (your play shown large, a card moving, the end of the deal), not played; taken only once it has stayed
+      // like that for PLAY_WAIT (your plays while this page was in the background).
+      // You play only on your turn, so cards leaving your row with no turn of yours seen since your last play are held
+      // the same way.
+      if (L.S.my && o.guess.length !== 13) {
+        const al = ST.align(L.S.my, L.S.guess, o.guess, o.sure);
+        let lastPlay = -1, lastTurn = -1;
+        L.S.events.forEach((e, i) => { if (e.k === "play") lastPlay = i; else if (e.k === "turn") lastTurn = i; });
+        const why = !al ? "手牌和之前的對不起來"
+          : al.gone.length && !ST.classify(al.gone) ? `手牌少了 ${al.gone.length} 張，湊不成一手牌：先當作有牌被擋住`
+          : al.gone.length && lastTurn < lastPlay ? `手牌少了 ${al.gone.length} 張，但你出牌後還沒輪到你：先當作有牌被擋住` : null;
+        if (why) {
+          const k = (al ? "p" : "a") + o.guess.join(",");
+          L.odd = L.odd && L.odd.k === k ? { k, n: L.odd.n + 1, t: L.odd.t } : { k, n: 1, t: now };
+          if (!al ? L.odd.n < ODD_N : now - L.odd.t < PLAY_WAIT) return { status: "odd", why, swapNote, swapDone: L.swapDone };
+        }
       }
       L.odd = null;
       // the swap: your row of 13 now differs from the one dealt by up to 3 cards (cards not read surely count as read;
@@ -310,7 +325,8 @@
       const recent = newest && !newest.used && now - newest.at < 6000 ? newest.card : null;
       const lastShow = L.shows.length ? L.shows[L.shows.length - 1] : null;
       const show = lastShow && !lastShow.used && now - lastShow.at < MATCH_BEFORE ? { seat: lastShow.seat, cards: lastShow.cards } : null;
-      const out = ST.apply(L.S, r, { live: true, now, disp: dispFor(now), recent, show, handT: L.handT });
+      const resync = L.lastApplied != null && now - L.lastApplied < RESYNC_GAP;
+      const out = ST.apply(L.S, r, { live: true, now, resync, disp: dispFor(now), recent, show, handT: L.handT });
       if (out.err) return { status: "err", why: out.err };
       const S = out.S;
       // a display that was used up (that seat's count went down) is forgotten
@@ -335,6 +351,7 @@
       match(now);
       // a swap game: a deal just dealt (13 cards each, nothing played) starts its swap
       const swapStart = !S.swap && startSwap(now);
+      L.lastApplied = now;
       return { status: "applied", turn: !!S.round, notes: out.notes, swapStart, swapDone, hold, swapNote };
     }
 
