@@ -583,6 +583,23 @@
   // only your hand's leftover singles (散牌) on a single, only whole pieces of your best split on a pair or 5-card play,
   // or PASS; your combinations stay whole for when you have the lead. Your lead: every play.
   // opt.danger false: no danger rule. Returns { L, danger: [seats], noPass }.
+  // 只顯示最大牌's own advice, without simulating: the hand split into the fewest plays (splitHand); leading, the smallest
+  // of the split's plays with the most cards; on someone's play, the smallest play that beats it without the rest of
+  // the hand taking more plays than before (else PASS)
+  function ruleChoice(g, p, L) {
+    const H = g.hand[p], sp = splitHand(H), pieces = splitPieces(H, sp);
+    const small = (list) => (list.length ? list.reduce((a, b) => (beats(a, b) ? b : a)) : null);
+    const plays = L.filter((c) => c.type !== T_PASS);
+    let card = null;
+    if (g.last.type === T_PASS) {
+      const ok = pieces.map((x) => plays.find((c) => sameCombo(c, x))).filter(Boolean);
+      const most = Math.max(0, ...ok.map(sizeOf));
+      card = small(ok.filter((c) => sizeOf(c) === most)) || small(plays);
+    } else {
+      card = small(plays.filter((c) => 1 + splitHand(minus(H, c.set)).steps <= sp.steps));
+    }
+    return { card: card || PASS(), pieces, steps: sp.steps };
+  }
   function looseChoice(g, p, L, opt) {
     opt = opt || {};
     const H = g.hand[p], U = unseenOf(H, g.played);
@@ -618,7 +635,7 @@
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, looseChoice, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;

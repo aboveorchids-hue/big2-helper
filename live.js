@@ -389,6 +389,8 @@
       const outs = Lg.filter((c) => B.isEmpty(B.minus(g.hand[0], c.set)));
       if (outs.length) return { kind: "finish", card: outs.reduce((a, b) => (B.winnerMult(b) > B.winnerMult(a) ? b : a)), g, risky };
       if (Lg.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lg[0], g };
+      // 只顯示最大牌 (opts.rule): the split's rule, no simulation (B.ruleChoice)
+      if (opts.rule) { const c = B.ruleChoice(g, 0, Lg); return { kind: "rule", card: c.card, g, risky: risky && c.card.type !== B.T_PASS }; }
       const W = opts.W || (root.B2_MODELS && root.B2_MODELS.W);
       // the aim: points (ev), going out first (ev false), or points with opts.winBonus more for going out first (兼顧)
       const ev = opts.ev !== false, winBonus = ev ? opts.winBonus || 0 : 0;

@@ -161,16 +161,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b23"></script>
-<script src="read.js?v=b23"></script>
-<script src="engine.js?v=b23"></script>
-<script src="state.js?v=b23"></script>
-<script src="live.js?v=b23"></script>
-<script src="swap.js?v=b23"></script>
+<script src="models.js?v=b24"></script>
+<script src="read.js?v=b24"></script>
+<script src="engine.js?v=b24"></script>
+<script src="state.js?v=b24"></script>
+<script src="live.js?v=b24"></script>
+<script src="swap.js?v=b24"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b23";
+const VERSION = "b24";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -242,6 +242,7 @@ function renderAdvice(r) {
   let line = "";
   if (r.kind === "finish") line = "這手出完就贏了";
   else if (r.kind === "forced") line = "只有這一種出法";
+  else if (r.kind === "rule") line = R.lead ? "有牌權：出分解裡張數最多的最小一手" : isPass ? "壓得過的牌都會拆壞組合、多出幾手，PASS" : "壓得過、又不會多出幾手的最小一手";
   else if (r.kind === "none") line = R.top ? `沒有能壓${SEAT[R.top.s]}這手的牌` : "沒有能出的牌";
   else if (r.stats && r.stats.length) {
     const t = r.stats[0];
@@ -259,7 +260,6 @@ function renderAdvice(r) {
     `<div class="play"><p class="verb${isPass ? " pass" : ""}">${isPass ? "PASS" : `出${typeName(c)}`}</p>` +
     (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) + `</div>` +
     `<p class="note">${line}</p>` + warn.map((w) => `<p class="note warn">${w}</p>`).join("") +
-    `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, rec.has(x) ? "on" : "")).join("")}</div>` +
     (alts ? `<div class="alts"><span>其他出法</span>${alts}</div>` : "") + topsHTML(S);
   old = false; hasAdvice = true;
   paint();
@@ -290,18 +290,17 @@ function topsHTML(S) {
     }
     if (list.length) mine.push(`<div class="alt"><span>${k}</span><span>${list.join("、")}</span></div>`);
   }
-  const unseen = B.toIds(U).reverse();
-  return `<div class="alts"><span>還沒出現的牌（${unseen.length} 張，在別家手上；2 和 A 有框）</span>` +
-    `<div class="alt"><span class="mini">${unseen.map((x) => pc(x, (x >> 2) >= 11 ? "hi" : "")).join("")}</span></div></div>` +
-    `<div class="alts"><span>別家可能有的最大牌</span>${theirs.join("")}</div>` +
-    `<div class="alts"><span>你手上獨大的牌</span>${mine.length ? mine.join("") : `<div class="alt"><span>沒有</span><span></span></div>`}</div>`;
+  const pieces = B.splitPieces(H, B.splitHand(H)).sort((a, b) => idsOf(b).length - idsOf(a).length || (B.beats(a, b) ? 1 : -1));
+  return `<div class="alts"><span>手牌分解（最少 ${pieces.length} 手出完）</span>` +
+    pieces.map((c) => `<div class="alt"><span>${typeName(c)}</span><span><b>${esc(comboText(idsOf(c)))}</b></span></div>`).join("") + `</div>` +
+    `<div class="alts"><span>你手上獨大的牌</span>${mine.length ? mine.join("") : `<div class="alt"><span>沒有</span><span></span></div>`}</div>` +
+    `<div class="alts"><span>別家可能有的最大牌</span>${theirs.join("")}</div>`;
 }
 // 只顯示最大牌: no simulation and no advice, just your hand and the biggest cards the others could have
 function renderTops() {
   const S = live.S, R = S.round;
   if (!S.my || !S.my.length) return;
-  bodyHTML = `<p class="who">${R ? topText(R) : "等對手出牌"}</p>` +
-    `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(S);
+  bodyHTML = `<p class="who">${R ? topText(R) : "等對手出牌"}</p>` + topsHTML(S);
   old = false; hasAdvice = true;
   paint();
 }
@@ -313,7 +312,12 @@ function adviseSoon() {
   const tk = live.turnKey();
   if (tk && tk === shownTurn && hasAdvice) { old = false; paint(); return; }
   clearTimeout(adviseTimer);
-  if (aim === "tops") { renderTops(); shownTurn = tk; return; }
+  if (aim === "tops") {
+    const r = live.S.round ? live.advise({ rule: true }) : null;
+    if (r) { renderAdvice(r); beep(r.card.type === B.T_PASS); log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（只顯示最大牌，${r.kind}）`); }
+    else renderTops();
+    shownTurn = tk; return;
+  }
   const key = live.recKey();
   bodyHTML = `<p class="who">${live.S.round ? topText(live.S.round) : ""}</p><p class="verb wait"><span class="spin"></span>計算中…</p>`; old = false; paint();
   adviseTimer = setTimeout(() => {
@@ -558,7 +562,7 @@ let lastUnread = "", lastOdd = "", lastShots = 0;
 let noPlayTurn = false;
 function showNoPlay() {
   bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>` +
-    (live.S.my && live.S.my.length ? `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(live.S) : "");
+    (live.S.my && live.S.my.length ? topsHTML(live.S) : "");
   hasAdvice = true; shownTurn = null; old = false; setState("輪到你", "turn"); paint();
 }
 // ---------- a play shown large read as more or fewer cards than its owner put down ----------

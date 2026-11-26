@@ -86,6 +86,8 @@ function heroMove(g, h, seed, info) {
   const outs = L.filter((c) => B.isEmpty(B.minus(g.hand[p], c.set)));
   if (outs.length) return outs.reduce((a, b) => (B.winnerMult(b) > B.winnerMult(a) ? b : a));
   if (L.length === 1 && g.last.type === B.T_PASS) return L[0];
+  // rule: 只顯示最大牌's own advice (B.ruleChoice), no simulation
+  if (h.name === "rule") return B.ruleChoice(g, p, L).card;
   const adapt = h.fixed ? null : { z: h.z || 2.5, min: h.min || 200, max: h.deals || 1500, batch: 100, budget: 1e9 };
   const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
   if (h.name === "pimc") {
