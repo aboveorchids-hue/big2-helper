@@ -399,11 +399,11 @@
       // (nothing of the kind to play on someone's play: PASS)
       let Lsim = lz ? (lz.L.length || g.last.type !== B.T_PASS ? lz.L : Lg) : Lg;
       // 神幣優先 (opts.keep): only plays that split nothing up (B.keepPlays); on someone's play, none of them: PASS
-      // (someone down to opts.free cards or fewer, 5 unless set: anything goes, as before)
-      const free = opts.free == null ? 5 : opts.free;
+      // (someone down to opts.free cards or fewer, 8 unless set: anything goes, as before; a play with a 2 always allowed)
+      const free = opts.free == null ? 8 : opts.free;
       if (opts.keep && B.anyLow(g, 0, free)) opts = Object.assign({}, opts, { keep: false, freed: free });
       if (opts.keep) {
-        Lsim = B.keepPlays(g.hand[0], Lg);
+        Lsim = B.keepPlays(g.hand[0], Lg, true);
         if (!Lsim.length) return { kind: "keep", card: B.PASS(), g };
         if (Lsim.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lsim[0], g, keep: true };
       }

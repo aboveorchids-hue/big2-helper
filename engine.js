@@ -589,9 +589,10 @@
   // the plays of L after which the rest of hand H still takes no more plays than before (splitHand): nothing split up
   // (神幣優先 keeps to them unless someone is down to `free` cards or fewer: then anything goes)
   const anyLow = (g, p, free) => [0, 1, 2, 3].some((q) => q !== p && count(g.hand[q]) > 0 && count(g.hand[q]) <= free);
-  function keepPlays(H, L) {
+  // (two: a play with a 2 in it is always allowed)
+  function keepPlays(H, L, two) {
     const steps = splitHand(H).steps;
-    return L.filter((c) => c.type !== T_PASS && 1 + splitHand(minus(H, c.set)).steps <= steps);
+    return L.filter((c) => c.type !== T_PASS && ((two && c.set[12]) || 1 + splitHand(minus(H, c.set)).steps <= steps));
   }
   function ruleChoice(g, p, L) {
     const H = g.hand[p], sp = splitHand(H), pieces = splitPieces(H, sp);
