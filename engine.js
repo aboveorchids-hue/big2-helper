@@ -195,10 +195,11 @@
   const countsOf = (H) => H.map((m) => PC4[m]);
   function psSteps(c) { let s = 0; for (let r = 0; r < 13; r++) s += (c[r] >> 1) + (c[r] & 1); return s; }
   function psWeak(c) { let w = 0; for (let r = 0; r < 13; r++) w += ((c[r] >> 1) + (c[r] & 1)) * 3 * (12 - r); return w; }
-  function listFives(c) {
+  // (no2: no full house made with a pair of 2s, for keepPlays: three of a kind whose only pair is the 2s is no combo)
+  function listFives(c, no2) {
     const out = [];
     for (let o = 0; o < 10; o++) { let ok = true; for (let i = 0; i < 5; i++) if (!c[WINR[o][i]]) { ok = false; break; } if (ok) out.push([0, o, 0]); }
-    for (let t = 0; t < 13; t++) if (c[t] >= 3) for (let p = 0; p < 13; p++) if (p !== t && c[p] >= 2) out.push([1, t, p]);
+    for (let t = 0; t < 13; t++) if (c[t] >= 3) for (let p = 0; p < 13; p++) if (p !== t && c[p] >= 2 && !(no2 && p === 12)) out.push([1, t, p]);
     for (let q = 0; q < 13; q++) if (c[q] === 4) {
       let k = -1;
       for (let r = 0; r < 13; r++) if (r !== q && (c[r] & 1)) { k = r; break; }
@@ -214,15 +215,15 @@
   }
   const fiveWeak = (f) => (f[0] === 0 ? 4 * (9 - f[1]) : f[0] === 1 ? 3 * (12 - f[1]) : 0);
   const better = (s1, w1, s2, w2) => s1 < s2 || (s1 === s2 && w1 < w2);
-  function splitCounts(c0) {
+  function splitCounts(c0, no2) {
     const c = c0.slice();
     const best = { steps: psSteps(c), weak: psWeak(c), f: [] };
-    const A = listFives(c);
+    const A = listFives(c, no2);
     for (const a of A) {
       fiveApply(c, a, -1);
       const s1 = 1 + psSteps(c), w1 = fiveWeak(a) + psWeak(c);
       if (better(s1, w1, best.steps, best.weak)) { best.steps = s1; best.weak = w1; best.f = [a]; }
-      const B = listFives(c);
+      const B = listFives(c, no2);
       for (const b of B) {
         fiveApply(c, b, -1);
         const s2 = 2 + psSteps(c), w2 = fiveWeak(a) + fiveWeak(b) + psWeak(c);
@@ -590,9 +591,11 @@
   // (神幣優先 keeps to them unless someone is down to `free` cards or fewer: then anything goes)
   const anyLow = (g, p, free) => [0, 1, 2, 3].some((q) => q !== p && count(g.hand[q]) > 0 && count(g.hand[q]) <= free);
   // (two: a play with a 2 in it is always allowed)
+  // (a full house whose pair is the 2s does not count as a combo: its three of a kind is a pair and a single)
+  const keepSteps = (H) => splitCounts(countsOf(H), true).steps;
   function keepPlays(H, L, two) {
-    const steps = splitHand(H).steps;
-    return L.filter((c) => c.type !== T_PASS && ((two && c.set[12]) || 1 + splitHand(minus(H, c.set)).steps <= steps));
+    const steps = keepSteps(H);
+    return L.filter((c) => c.type !== T_PASS && ((two && c.set[12]) || 1 + keepSteps(minus(H, c.set)) <= steps));
   }
   // 神幣優先: the simulation's pick (card, over its stats) swapped for a play that splits nothing up (keepPlays without
   // the 2s; PASS counts) when that one is within `close` points a game of it
@@ -614,7 +617,7 @@
       const most = Math.max(0, ...ok.map(sizeOf));
       card = small(ok.filter((c) => sizeOf(c) === most)) || small(plays);
     } else {
-      card = small(plays.filter((c) => 1 + splitHand(minus(H, c.set)).steps <= sp.steps));
+      card = small(keepPlays(H, plays, false));
     }
     return { card: card || PASS(), pieces, steps: sp.steps };
   }
