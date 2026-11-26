@@ -502,7 +502,7 @@
   function choosePIMC(g, p, L, pol) { return withSplitCache(() => choosePIMC1(g, p, L, pol)); }
   function choosePIMC1(g, p, L, pol) {
     let C = candidates(g, p, L);
-    if (g.last.type !== T_PASS) C.push(PASS());
+    if (g.last.type !== T_PASS && !pol.noPass) C.push(PASS());
     const rp = { type: pol.rollType, w: pol.w };
     if (C.length === 1) return { card: C[0], stats: [{ card: C[0], wins: 0, n: 0 }], pref: C[0] };
     const pref = choose(g, p, rp);
@@ -575,10 +575,56 @@
     return { card: C[bi], stats: C.map((c, i) => ({ card: c, wins: wins[i], pts: pts[i] / Math.max(1, n[i]), n: n[i], out: !alive[i] })), pref, ms: Date.now() - t0, deals: Math.max(...n) };
   }
 
+  // ---- 散牌優先: which plays to choose from (the simulation then picks among them) ----
+  // Danger: another seat could go out in one or two plays. Down to 1 card; 2 with a pair among the cards not seen; 5
+  // with a 5-card play among them; or 3 or 4 cards made of two plays (1+2, 2+2) of which one could be a play you
+  // cannot beat (獨大 in that seat's hand). In danger: the plays with a 2 first, else those shedding the most
+  // cards, and no PASS while you can play. Otherwise: only the plays of your hand's best split (nothing broken); when
+  // you lead, its singles (散牌) and the pieces nobody can beat (to go out with), and when none, every piece.
+  // Returns { L, danger: [seats], noPass }.
+  function looseChoice(g, p, L) {
+    const H = g.hand[p], U = unseenOf(H, g.played);
+    const lead = g.last.type === T_PASS;
+    const best = (list) => (list.length ? list.reduce((a, b) => (beats(b, a) ? b : a)) : null);
+    const of = (gen) => { const o = []; gen(o); return o; };
+    const Uplays = { 1: of((o) => genSingles(U, o)), 2: of((o) => genPairs(U, o)), 5: of((o) => { genStraights(U, o, true, true); genFulls(U, o); genQuads(U, o); }) };
+    const Hplays = { 1: of((o) => genSingles(H, o)), 2: of((o) => genPairs(H, o)), 5: of((o) => { genStraights(H, o, true, true); genFulls(H, o); genQuads(H, o); }) };
+    const bombs = of((o) => { genQuads(H, o); genStraights(H, o, false, true); });
+    // a play of that size among the cards not seen that nothing of yours beats
+    const bossThere = (n) => {
+      const u = best(Uplays[n]);
+      if (!u) return false;
+      return !Hplays[n].concat(bombs).some((c) => beats(c, u));
+    };
+    const danger = [];
+    for (let q = 0; q < 4; q++) {
+      if (q === p) continue;
+      const n = count(g.hand[q]);
+      if (!n) continue;
+      let d = n === 1 || (n === 2 && Uplays[2].length > 0) || (n === 5 && Uplays[5].length > 0);
+      for (const [a, b] of [[1, 2], [2, 1], [2, 2]]) if (!d && a + b === n && Uplays[b].length && bossThere(a)) d = true;
+      if (d) danger.push(q);
+    }
+    if (danger.length) {
+      const with2 = L.filter((c) => c.set[12]);
+      if (with2.length) return { L: with2, danger, noPass: true };
+      const most = Math.max(...L.map((c) => count(c.set)));
+      return { L: L.filter((c) => count(c.set) === most), danger, noPass: true };
+    }
+    const pieces = splitPieces(H, splitHand(H));
+    const isPiece = (c) => pieces.some((x) => x.type === c.type && sameSet(x.set, c.set));
+    const own = L.filter(isPiece);
+    if (lead) {
+      const loose = own.filter((c) => c.type === T_SINGLE || !beatableBy(c, U));
+      return { L: loose.length ? loose : own.length ? own : L, danger, noPass: false };
+    }
+    return { L: own, danger, noPass: false };
+  }
+
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, looseChoice, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;
