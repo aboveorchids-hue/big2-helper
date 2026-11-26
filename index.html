@@ -158,16 +158,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b17"></script>
-<script src="read.js?v=b17"></script>
-<script src="engine.js?v=b17"></script>
-<script src="state.js?v=b17"></script>
-<script src="live.js?v=b17"></script>
-<script src="swap.js?v=b17"></script>
+<script src="models.js?v=b18"></script>
+<script src="read.js?v=b18"></script>
+<script src="engine.js?v=b18"></script>
+<script src="state.js?v=b18"></script>
+<script src="live.js?v=b18"></script>
+<script src="swap.js?v=b18"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b17";
+const VERSION = "b18";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -239,7 +239,6 @@ function renderAdvice(r) {
   let line = "";
   if (r.kind === "finish") line = "這手出完就贏了";
   else if (r.kind === "forced") line = "只有這一種出法";
-  else if (r.kind === "lock") line = `<b>保證出完</b>：照這個順序出，別家怎樣都壓不過，一定先出完<br><span class="sub">${r.plan.map((c, i) => (i === r.plan.length - 1 && r.plan.length > 1 ? "最後 " : "") + esc(comboText(idsOf(c)))).join(" → ")}${r.mult > 1 ? `（最後一手 ×${r.mult}，贏的分數加倍）` : ""}</span>`;
   else if (r.kind === "none") line = R.top ? `沒有能壓${SEAT[R.top.s]}這手的牌` : "沒有能出的牌";
   else if (r.stats && r.stats.length) {
     const t = r.stats[0];
@@ -256,9 +255,27 @@ function renderAdvice(r) {
     (isPass ? "" : `<div class="row">${sortIds(idsOf(c)).map((x) => pc(x, "big")).join("")}</div>`) + `</div>` +
     `<p class="note">${line}</p>` + warn.map((w) => `<p class="note warn">${w}</p>`).join("") +
     `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, rec.has(x) ? "on" : "")).join("")}</div>` +
-    (alts ? `<div class="alts"><span>其他出法</span>${alts}</div>` : "");
+    (alts ? `<div class="alts"><span>其他出法</span>${alts}</div>` : "") + topsHTML(S);
   old = false; hasAdvice = true;
   paint();
+}
+// the biggest single, pair, straight and full house the others could still have (from the cards not seen yet; a play
+// needs one of them to hold as many cards): your play above it is 獨大
+function topsHTML(S) {
+  const U = B.unseenOf(B.fromIds(S.my), B.fromIds(S.played));
+  const most = Math.max(S.counts[1] || 0, S.counts[2] || 0, S.counts[3] || 0);
+  const best = (gen, n) => {
+    if (most < n) return null;
+    const out = []; gen(out);
+    return out.length ? out.reduce((a, b) => (B.beats(b, a) ? b : a)) : null;
+  };
+  const rows = [
+    ["單張", best((o) => B.genSingles(U, o), 1), (c) => esc(comboText(idsOf(c)))],
+    ["對子", best((o) => B.genPairs(U, o), 2), (c) => esc(comboText(idsOf(c)))],
+    ["順子", best((o) => B.genStraights(U, o, true, false), 5), (c) => esc(comboText(idsOf(c)))],
+    ["葫蘆", best((o) => B.genFulls(U, o), 5), (c) => `三條 ${B.RANKS[c.key]}`],
+  ].map(([k, c, f]) => `<div class="alt"><span>${k}</span><span>${c ? `<b>${f(c)}</b>` : "沒有人出得了"}</span></div>`).join("");
+  return `<div class="alts"><span>別家可能有的最大牌</span>${rows}</div>`;
 }
 let adviseTimer = null;
 // The advice stays for the whole turn: a later reading of the same turn (a PASS sign or a count showing up) does not
@@ -277,7 +294,7 @@ function adviseSoon() {
       const r = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, adapt: SIM.play });
       if (!r) return;
       renderAdvice(r); shownTurn = live.turnKey(); beep(r.card.type === B.T_PASS);
-      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aimName()}，${r.kind}${r.plan ? " " + r.plan.map((c) => comboText(idsOf(c))).join(" → ") : ""}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
+      log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aimName()}，${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
     } catch (e) { log("計算出錯：" + (e.message || e)); setState("計算出錯", "bad"); }
   }, 30);
 }
