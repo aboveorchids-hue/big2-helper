@@ -120,7 +120,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
-      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（不拆組合，2 不限，有人剩 8 張以下才拆）</option><option value="win">勝率優先（先出完的機率最高）</option><option value="mix">兼顧（分數差不多時選勝率高的）</option><option value="loose">散牌優先（沒牌權時出散牌，危險時先出 2）</option><option value="tops">只顯示別家可能有的最大牌（不給建議）</option></select></label>
+      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（不拆組合，2 不限，有人剩 8 張以下才拆，差 2 分內不拆）</option><option value="win">勝率優先（先出完的機率最高）</option><option value="mix">兼顧（分數差不多時選勝率高的）</option><option value="loose">散牌優先（沒牌權時出散牌，危險時先出 2）</option><option value="tops">只顯示別家可能有的最大牌（不給建議）</option></select></label>
       <label><input id="swapIn" type="checkbox"> 換牌局（每局開始先換 0～3 張）</label>
       <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
@@ -161,16 +161,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b27"></script>
-<script src="read.js?v=b27"></script>
-<script src="engine.js?v=b27"></script>
-<script src="state.js?v=b27"></script>
-<script src="live.js?v=b27"></script>
-<script src="swap.js?v=b27"></script>
+<script src="models.js?v=b28"></script>
+<script src="read.js?v=b28"></script>
+<script src="engine.js?v=b28"></script>
+<script src="state.js?v=b28"></script>
+<script src="live.js?v=b28"></script>
+<script src="swap.js?v=b28"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b27";
+const VERSION = "b28";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -253,6 +253,7 @@ function renderAdvice(r) {
   }
   const warn = [];
   if (r.keep && r.kind === "sim") warn.push("神幣優先：只從出了不會多出幾手的出法（有 2 的不限）裡比");
+  if (r.kept) warn.push(`分數差 ${r.kept} 分以內，選不拆組合的出法`);
   if (r.freed && r.kind === "sim") warn.push(`有人剩 ${r.freed} 張以下：可以拆組合擋他`);
   if (r.loose) warn.push(r.loose.danger.length ? `危險：${r.loose.danger.map((q) => SEAT[q]).join("、")}最多三手就可能出完，先出 2，再盡量多出幾張`
     : R.lead ? "散牌優先：你有牌權，照模擬出" : "散牌優先：要壓別人時只出散牌或現成的組合，組合留到拿到牌權時一次出完");

@@ -400,18 +400,22 @@
       let Lsim = lz ? (lz.L.length || g.last.type !== B.T_PASS ? lz.L : Lg) : Lg;
       // 神幣優先 (opts.keep): only plays that split nothing up (B.keepPlays); on someone's play, none of them: PASS
       // (someone down to opts.free cards or fewer, 8 unless set: anything goes, as before; a play with a 2 always allowed)
-      const free = opts.free == null ? 8 : opts.free;
+      const free = opts.free == null ? 8 : opts.free, wantKeep = !!opts.keep;
       if (opts.keep && B.anyLow(g, 0, free)) opts = Object.assign({}, opts, { keep: false, freed: free });
       if (opts.keep) {
         Lsim = B.keepPlays(g.hand[0], Lg, true);
         if (!Lsim.length) return { kind: "keep", card: B.PASS(), g };
         if (Lsim.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lsim[0], g, keep: true };
       }
-      const r = B.choosePIMC(g, 0, Lsim, { type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
+      const r0 = B.choosePIMC(g, 0, Lsim, { type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
+      // (神幣優先: a play that splits something up only when nothing that keeps the hand whole is within 2 points of it)
+      const close = opts.close == null ? 2 : opts.close;
+      const pick = wantKeep ? B.preferKeep(g.hand[0], r0.stats, r0.card, close) : r0.card;
+      const r = Object.assign({}, r0, { card: pick }), kept = pick !== r0.card;
       // the play chosen first, then the others by the aim (each over the deals it was played on)
       const val = (x) => (ev ? x.pts + winBonus * x.wins / x.n : x.wins / x.n);
       const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (a.card === r.card ? -1 : b.card === r.card ? 1 : val(b) - val(a)));
-      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, freed: opts.freed || 0, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, freed: opts.freed || 0, kept: kept ? close : 0, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }

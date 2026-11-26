@@ -94,7 +94,9 @@ function heroMove(g, h, seed, info) {
     // loose=1: 散牌優先 (B.looseChoice narrows the plays, the simulation picks among them)
     if (h.loose) { const lz = B.looseChoice(g, p, L, { danger: h.loose !== 2 }); if (lz.L.length) { if (lz.L.length === 1 && lz.noPass) return lz.L[0]; const r = B.choosePIMC(g, p, lz.L, Object.assign({}, pol, { noPass: lz.noPass })); info.deals += r.deals || 0; info.dec++; return r.card; } if (g.last.type !== B.T_PASS) return B.PASS(); }
     // keep=1: 神幣優先 as on the page, only plays that split nothing up (B.keepPlays)
-    if (h.keep && !B.anyLow(g, p, h.free == null ? 5 : h.free)) { const K = B.keepPlays(g.hand[p], L, !!h.two); if (!K.length) return B.PASS(); if (K.length === 1 && g.last.type === B.T_PASS) return K[0]; const r = B.choosePIMC(g, p, K, pol); info.deals += r.deals || 0; info.dec++; return r.card; }
+    if (h.keep && !B.anyLow(g, p, h.free == null ? 5 : h.free)) { const K = B.keepPlays(g.hand[p], L, !!h.two); if (!K.length) return B.PASS(); if (K.length === 1 && g.last.type === B.T_PASS) return K[0]; const r = B.choosePIMC(g, p, K, pol); info.deals += r.deals || 0; info.dec++; return h.close != null ? B.preferKeep(g.hand[p], r.stats, r.card, h.close) : r.card; }
+    // close=N: (with keep) a play that splits something up only when nothing that keeps the hand whole is within N points
+    if (h.keep && h.close != null) { const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return B.preferKeep(g.hand[p], r.stats, r.card, h.close); }
     const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return r.card;
   }
   if (ADV) { const r = ADV(g, p, L, Object.assign({}, pol, h), info); return r; }

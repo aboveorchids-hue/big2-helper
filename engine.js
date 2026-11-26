@@ -594,6 +594,16 @@
     const steps = splitHand(H).steps;
     return L.filter((c) => c.type !== T_PASS && ((two && c.set[12]) || 1 + splitHand(minus(H, c.set)).steps <= steps));
   }
+  // 神幣優先: the simulation's pick (card, over its stats) swapped for a play that splits nothing up (keepPlays without
+  // the 2s; PASS counts) when that one is within `close` points a game of it
+  function preferKeep(H, stats, card, close) {
+    const keeps = (c) => c.type === T_PASS || keepPlays(H, [c], false).length > 0;
+    if (keeps(card)) return card;
+    const top = stats.find((x) => x.card === card);
+    if (!top) return card;
+    const ok = stats.filter((x) => x.n > 0 && keeps(x.card) && x.pts >= top.pts - close);
+    return ok.length ? ok.reduce((a, b) => (b.pts > a.pts ? b : a)).card : card;
+  }
   function ruleChoice(g, p, L) {
     const H = g.hand[p], sp = splitHand(H), pieces = splitPieces(H, sp);
     const small = (list) => (list.length ? list.reduce((a, b) => (beats(a, b) ? b : a)) : null);
@@ -643,7 +653,7 @@
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, keepPlays, anyLow, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, keepPlays, anyLow, preferKeep, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;
