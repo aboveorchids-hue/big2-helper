@@ -399,6 +399,9 @@
       // (nothing of the kind to play on someone's play: PASS)
       let Lsim = lz ? (lz.L.length || g.last.type !== B.T_PASS ? lz.L : Lg) : Lg;
       // 神幣優先 (opts.keep): only plays that split nothing up (B.keepPlays); on someone's play, none of them: PASS
+      // (someone down to opts.free cards or fewer, 5 unless set: anything goes, as before)
+      const free = opts.free == null ? 5 : opts.free;
+      if (opts.keep && B.anyLow(g, 0, free)) opts = Object.assign({}, opts, { keep: false, freed: free });
       if (opts.keep) {
         Lsim = B.keepPlays(g.hand[0], Lg);
         if (!Lsim.length) return { kind: "keep", card: B.PASS(), g };
@@ -408,7 +411,7 @@
       // the play chosen first, then the others by the aim (each over the deals it was played on)
       const val = (x) => (ev ? x.pts + winBonus * x.wins / x.n : x.wins / x.n);
       const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (a.card === r.card ? -1 : b.card === r.card ? 1 : val(b) - val(a)));
-      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, freed: opts.freed || 0, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
