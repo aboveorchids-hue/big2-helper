@@ -158,16 +158,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b21"></script>
-<script src="read.js?v=b21"></script>
-<script src="engine.js?v=b21"></script>
-<script src="state.js?v=b21"></script>
-<script src="live.js?v=b21"></script>
-<script src="swap.js?v=b21"></script>
+<script src="models.js?v=b22"></script>
+<script src="read.js?v=b22"></script>
+<script src="engine.js?v=b22"></script>
+<script src="state.js?v=b22"></script>
+<script src="live.js?v=b22"></script>
+<script src="swap.js?v=b22"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b21";
+const VERSION = "b22";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -293,8 +293,8 @@ function topsHTML(S) {
 // 只顯示最大牌: no simulation and no advice, just your hand and the biggest cards the others could have
 function renderTops() {
   const S = live.S, R = S.round;
-  if (!R) return;
-  bodyHTML = `<p class="who">${topText(R)}</p>` +
+  if (!S.my || !S.my.length) return;
+  bodyHTML = `<p class="who">${R ? topText(R) : "等對手出牌"}</p>` +
     `<div class="row" aria-label="你的手牌">${sortIds(S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(S);
   old = false; hasAdvice = true;
   paint();
@@ -328,7 +328,7 @@ function redoAdvice(only) {
   if (only !== "play") swapShown = null;
   const sw = live.swapInfo();
   if (sw && sw.phase === "choose") { if (only !== "play") swapAdviseSoon(); }
-  else if (live.S.round && only !== "swap") adviseSoon();
+  else if ((live.S.round || (aim === "tops" && live.S.my)) && only !== "swap") adviseSoon();
 }
 
 // ---------- how long the advice simulates (進階設定) ----------
@@ -552,7 +552,7 @@ let lastUnread = "", lastOdd = "", lastShots = 0;
 let noPlayTurn = false;
 function showNoPlay() {
   bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>` +
-    (live.S.round ? `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(live.S) : "");
+    (live.S.my && live.S.my.length ? `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(live.S) : "");
   hasAdvice = true; shownTurn = null; old = false; setState("輪到你", "turn"); paint();
 }
 // ---------- a play shown large read as more or fewer cards than its owner put down ----------
@@ -573,9 +573,12 @@ function noteBad(b) {
   if (!b.long && showShot[b.seat]) { badShot = showShot[b.seat]; $("badBtn").hidden = false; }
 }
 function onReading(res, from) {
-  if (res && res.myTurn && res.noPlay) { if (!noPlayTurn) { noPlayTurn = true; showNoPlay(); beep(true); log("遊戲顯示沒有更大的牌：PASS"); } }
+  // (shown after the reading is taken in, so the lists under it count the play just made)
+  let noPlayNow = false;
+  if (res && res.myTurn && res.noPlay) { if (!noPlayTurn) { noPlayTurn = true; noPlayNow = true; } }
   else if (res && !res.myTurn) noPlayTurn = false;
   const st = live.process(res, Date.now());
+  if (noPlayNow) { showNoPlay(); beep(true); log("遊戲顯示沒有更大的牌：PASS"); }
   if (st.bad) for (const b of st.bad) noteBad(b);
   if (noPlayTurn && res.myTurn) return st;
   if (st.hold) res = Object.assign({}, res, { myTurn: false });
@@ -614,7 +617,7 @@ function onReading(res, from) {
   save(); renderTrack();
   if (sw && !st.turn) return st;
   if (st.turn) { setState("輪到你", "turn"); adviseSoon(); }
-  else { setState("等對手…"); if (aim === "tops" && S.round) renderTops(); else if (hasAdvice) { old = true; paint(); } else if (stream) { bodyHTML = `<p class="verb wait">等輪到你…</p><p class="note">已經讀到牌桌了；輪到你出牌時，這裡會自動出現建議。</p>`; paint(); } }
+  else { setState("等對手…"); if (aim === "tops" && S.my && S.my.length) renderTops(); else if (hasAdvice) { old = true; paint(); } else if (stream) { bodyHTML = `<p class="verb wait">等輪到你…</p><p class="note">已經讀到牌桌了；輪到你出牌時，這裡會自動出現建議。</p>`; paint(); } }
   return st;
 }
 
