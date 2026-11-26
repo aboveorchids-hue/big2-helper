@@ -69,7 +69,7 @@ function oppMove(g, p, pol) { return pol.custom ? customMove(g, p, pol) : B.choo
 // ---- you ----
 // smart / s: as above. pimc: the advice (B.choosePIMC) with deals (most), min (fewest), cand (plays compared), z (drop a
 // play this many standard errors behind), aim (pts | win), bonus (兼顧: the points plus this many more for going out
-// first), loose (1: 散牌優先, B.looseChoice); `fixed=1` plays exactly `deals` deals with every play.
+// first), loose (1: 散牌優先, B.looseChoice; 2: without its danger rule); `fixed=1` plays exactly `deals` deals with every play.
 function parseHero(spec) {
   const [name, rest] = spec.split(":");
   const o = { name, spec };
@@ -90,7 +90,7 @@ function heroMove(g, h, seed, info) {
   const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
   if (h.name === "pimc") {
     // loose=1: 散牌優先 (B.looseChoice narrows the plays, the simulation picks among them)
-    if (h.loose) { const lz = B.looseChoice(g, p, L); if (lz.L.length) { if (lz.L.length === 1 && lz.noPass) return lz.L[0]; const r = B.choosePIMC(g, p, lz.L, Object.assign({}, pol, { noPass: lz.noPass })); info.deals += r.deals || 0; info.dec++; return r.card; } if (g.last.type !== B.T_PASS) return B.PASS(); }
+    if (h.loose) { const lz = B.looseChoice(g, p, L, { danger: h.loose !== 2 }); if (lz.L.length) { if (lz.L.length === 1 && lz.noPass) return lz.L[0]; const r = B.choosePIMC(g, p, lz.L, Object.assign({}, pol, { noPass: lz.noPass })); info.deals += r.deals || 0; info.dec++; return r.card; } if (g.last.type !== B.T_PASS) return B.PASS(); }
     const r = B.choosePIMC(g, p, L, pol); info.deals += r.deals || 0; info.dec++; return r.card;
   }
   if (ADV) { const r = ADV(g, p, L, Object.assign({}, pol, h), info); return r; }

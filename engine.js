@@ -576,13 +576,15 @@
   }
 
   // ---- 散牌優先: which plays to choose from (the simulation then picks among them) ----
-  // Danger: another seat could go out in one or two plays. Down to 1 card; 2 with a pair among the cards not seen; 5
-  // with a 5-card play among them; or 3 or 4 cards made of two plays (1+2, 2+2) of which one could be a play you
-  // cannot beat (獨大 in that seat's hand). In danger: the plays with a 2 first, else those shedding the most
-  // cards, and no PASS while you can play. Otherwise: only the plays of your hand's best split (nothing broken); when
-  // you lead, its singles (散牌) and the pieces nobody can beat (to go out with), and when none, every piece.
-  // Returns { L, danger: [seats], noPass }.
-  function looseChoice(g, p, L) {
+  // Danger: another seat could go out in at most three plays (its count made of 1, 2 and 5-card plays, say 10 = 5+5
+  // or 11 = a 2 + 5 + 5), each size to be found among the cards not seen, and when it takes two or three plays one of
+  // them a play you cannot beat (獨大 in that seat's hand, so it keeps the lead). In danger: the plays with a 2 first,
+  // else those shedding the most cards, and no PASS while you can play. Otherwise, with a play to beat (not your lead):
+  // only your hand's leftover singles (散牌) on a single, only whole pieces of your best split on a pair or 5-card play,
+  // or PASS; your combinations stay whole for when you have the lead. Your lead: every play.
+  // opt.danger false: no danger rule. Returns { L, danger: [seats], noPass }.
+  function looseChoice(g, p, L, opt) {
+    opt = opt || {};
     const H = g.hand[p], U = unseenOf(H, g.played);
     const lead = g.last.type === T_PASS;
     const best = (list) => (list.length ? list.reduce((a, b) => (beats(b, a) ? b : a)) : null);
@@ -590,20 +592,16 @@
     const Uplays = { 1: of((o) => genSingles(U, o)), 2: of((o) => genPairs(U, o)), 5: of((o) => { genStraights(U, o, true, true); genFulls(U, o); genQuads(U, o); }) };
     const Hplays = { 1: of((o) => genSingles(H, o)), 2: of((o) => genPairs(H, o)), 5: of((o) => { genStraights(H, o, true, true); genFulls(H, o); genQuads(H, o); }) };
     const bombs = of((o) => { genQuads(H, o); genStraights(H, o, false, true); });
-    // a play of that size among the cards not seen that nothing of yours beats
-    const bossThere = (n) => {
-      const u = best(Uplays[n]);
-      if (!u) return false;
-      return !Hplays[n].concat(bombs).some((c) => beats(c, u));
-    };
+    const boss = { 1: false, 2: false, 5: false };
+    for (const n of [1, 2, 5]) { const u = best(Uplays[n]); boss[n] = !!u && !Hplays[n].concat(bombs).some((c) => beats(c, u)); }
+    // the ways to make n cards of at most three plays
+    const ways = [];
+    for (const a of [1, 2, 5]) { ways.push([a]); for (const b of [1, 2, 5]) { if (b < a) continue; ways.push([a, b]); for (const c of [1, 2, 5]) if (c >= b) ways.push([a, b, c]); } }
     const danger = [];
-    for (let q = 0; q < 4; q++) {
+    if (opt.danger !== false) for (let q = 0; q < 4; q++) {
       if (q === p) continue;
       const n = count(g.hand[q]);
-      if (!n) continue;
-      let d = n === 1 || (n === 2 && Uplays[2].length > 0) || (n === 5 && Uplays[5].length > 0);
-      for (const [a, b] of [[1, 2], [2, 1], [2, 2]]) if (!d && a + b === n && Uplays[b].length && bossThere(a)) d = true;
-      if (d) danger.push(q);
+      if (n && ways.some((w) => w.reduce((x, y) => x + y, 0) === n && w.every((k) => Uplays[k].length) && (w.length === 1 || w.some((k) => boss[k])))) danger.push(q);
     }
     if (danger.length) {
       const with2 = L.filter((c) => c.set[12]);
@@ -611,14 +609,10 @@
       const most = Math.max(...L.map((c) => count(c.set)));
       return { L: L.filter((c) => count(c.set) === most), danger, noPass: true };
     }
+    if (lead) return { L, danger, noPass: false };
     const pieces = splitPieces(H, splitHand(H));
     const isPiece = (c) => pieces.some((x) => x.type === c.type && sameSet(x.set, c.set));
-    const own = L.filter(isPiece);
-    if (lead) {
-      const loose = own.filter((c) => c.type === T_SINGLE || !beatableBy(c, U));
-      return { L: loose.length ? loose : own.length ? own : L, danger, noPass: false };
-    }
-    return { L: own, danger, noPass: false };
+    return { L: L.filter((c) => isPiece(c)), danger, noPass: false };
   }
 
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,

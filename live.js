@@ -394,7 +394,8 @@
       const ev = opts.ev !== false, winBonus = ev ? opts.winBonus || 0 : 0;
       // 散牌優先 (opts.loose): the plays to choose from narrowed down first (B.looseChoice), then simulated
       const lz = opts.loose ? B.looseChoice(g, 0, Lg) : null;
-      const Lsim = lz && lz.L.length ? lz.L : Lg;
+      // (nothing of the kind to play on someone's play: PASS)
+      const Lsim = lz ? (lz.L.length || g.last.type !== B.T_PASS ? lz.L : Lg) : Lg;
       const r = B.choosePIMC(g, 0, Lsim, { type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
       // the play chosen first, then the others by the aim (each over the deals it was played on)
       const val = (x) => (ev ? x.pts + winBonus * x.wins / x.n : x.wins / x.n);
