@@ -87,6 +87,9 @@ video { display: block; width: 96px; max-width: 100%; aspect-ratio: 4 / 3; objec
 details summary { cursor: pointer; font-weight: 700; color: var(--muted); font-size: 14px; }
 .track .seatrow { margin-top: 10px; font-size: 14px; }
 .track .seatrow b { color: var(--ink); }
+.alts .mini { display: flex; flex-wrap: wrap; gap: 3px; padding: 2px 0; }
+.alts .mini .pc { min-width: 30px; height: 38px; font-size: 15px; border-radius: 6px; padding: 0 3px; }
+.alts .mini .pc.hi { border: 2px solid var(--accent); }
 .track .mini { display: inline-flex; flex-wrap: wrap; gap: 3px; margin: 2px 6px 0 0; align-items: center; }
 .track .pc { min-width: 30px; height: 38px; font-size: 15px; border-radius: 6px; padding: 0 3px; }
 .track .pc.hi { border: 2px solid var(--accent); }
@@ -158,16 +161,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b22"></script>
-<script src="read.js?v=b22"></script>
-<script src="engine.js?v=b22"></script>
-<script src="state.js?v=b22"></script>
-<script src="live.js?v=b22"></script>
-<script src="swap.js?v=b22"></script>
+<script src="models.js?v=b23"></script>
+<script src="read.js?v=b23"></script>
+<script src="engine.js?v=b23"></script>
+<script src="state.js?v=b23"></script>
+<script src="live.js?v=b23"></script>
+<script src="swap.js?v=b23"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b22";
+const VERSION = "b23";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -287,7 +290,10 @@ function topsHTML(S) {
     }
     if (list.length) mine.push(`<div class="alt"><span>${k}</span><span>${list.join("、")}</span></div>`);
   }
-  return `<div class="alts"><span>別家可能有的最大牌</span>${theirs.join("")}</div>` +
+  const unseen = B.toIds(U).reverse();
+  return `<div class="alts"><span>還沒出現的牌（${unseen.length} 張，在別家手上；2 和 A 有框）</span>` +
+    `<div class="alt"><span class="mini">${unseen.map((x) => pc(x, (x >> 2) >= 11 ? "hi" : "")).join("")}</span></div></div>` +
+    `<div class="alts"><span>別家可能有的最大牌</span>${theirs.join("")}</div>` +
     `<div class="alts"><span>你手上獨大的牌</span>${mine.length ? mine.join("") : `<div class="alt"><span>沒有</span><span></span></div>`}</div>`;
 }
 // 只顯示最大牌: no simulation and no advice, just your hand and the biggest cards the others could have
