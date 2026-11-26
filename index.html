@@ -158,16 +158,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b20"></script>
-<script src="read.js?v=b20"></script>
-<script src="engine.js?v=b20"></script>
-<script src="state.js?v=b20"></script>
-<script src="live.js?v=b20"></script>
-<script src="swap.js?v=b20"></script>
+<script src="models.js?v=b21"></script>
+<script src="read.js?v=b21"></script>
+<script src="engine.js?v=b21"></script>
+<script src="state.js?v=b21"></script>
+<script src="live.js?v=b21"></script>
+<script src="swap.js?v=b21"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b20";
+const VERSION = "b21";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -262,22 +262,33 @@ function renderAdvice(r) {
   paint();
 }
 // the biggest single, pair, straight and full house the others could still have (from the cards not seen yet; a play
-// needs one of them to hold as many cards): your play above it is 獨大
+// needs one of them to hold as many cards), and your own plays of those kinds that nothing of the same kind among them
+// beats (獨大; 鐵支 and 同花順 not counted against a straight or full house)
 function topsHTML(S) {
-  const U = B.unseenOf(B.fromIds(S.my), B.fromIds(S.played));
+  const H = B.fromIds(S.my), U = B.unseenOf(H, B.fromIds(S.played));
   const most = Math.max(S.counts[1] || 0, S.counts[2] || 0, S.counts[3] || 0);
-  const best = (gen, n) => {
-    if (most < n) return null;
-    const out = []; gen(out);
-    return out.length ? out.reduce((a, b) => (B.beats(b, a) ? b : a)) : null;
-  };
-  const rows = [
-    ["單張", best((o) => B.genSingles(U, o), 1), (c) => esc(comboText(idsOf(c)))],
-    ["對子", best((o) => B.genPairs(U, o), 2), (c) => esc(comboText(idsOf(c)))],
-    ["順子", best((o) => B.genStraights(U, o, true, false), 5), (c) => esc(comboText(idsOf(c)))],
-    ["葫蘆", best((o) => B.genFulls(U, o), 5), (c) => `三條 ${B.RANKS[c.key]}`],
-  ].map(([k, c, f]) => `<div class="alt"><span>${k}</span><span>${c ? `<b>${f(c)}</b>` : "沒有人出得了"}</span></div>`).join("");
-  return `<div class="alts"><span>別家可能有的最大牌</span>${rows}</div>`;
+  const all = (gen, X) => { const o = []; gen(X, o); return o; };
+  const kinds = [
+    ["單張", (X, o) => B.genSingles(X, o), 1, (c) => esc(comboText(idsOf(c)))],
+    ["對子", (X, o) => B.genPairs(X, o), 2, (c) => esc(comboText(idsOf(c)))],
+    ["順子", (X, o) => B.genStraights(X, o, true, false), 5, (c) => esc(comboText(idsOf(c)))],
+    ["葫蘆", (X, o) => B.genFulls(X, o), 5, (c) => `三條 ${B.RANKS[c.key]}`],
+  ];
+  const theirs = [], mine = [];
+  for (const [k, gen, n, f] of kinds) {
+    const u = most < n ? [] : all(gen, U);
+    const top = u.length ? u.reduce((a, b) => (B.beats(b, a) ? b : a)) : null;
+    theirs.push(`<div class="alt"><span>${k}</span><span>${top ? `<b>${f(top)}</b>` : "沒有人出得了"}</span></div>`);
+    // yours above it, one per strength (the same top card or the same three), biggest first
+    const seen = new Set(), list = [];
+    for (const c of all(gen, H).sort((a, b) => b.key - a.key)) {
+      if (seen.has(c.key) || (top && !B.beats(c, top))) continue;
+      seen.add(c.key); list.push(`<b>${f(c)}</b>`);
+    }
+    if (list.length) mine.push(`<div class="alt"><span>${k}</span><span>${list.join("、")}</span></div>`);
+  }
+  return `<div class="alts"><span>別家可能有的最大牌</span>${theirs.join("")}</div>` +
+    `<div class="alts"><span>你手上獨大的牌</span>${mine.length ? mine.join("") : `<div class="alt"><span>沒有</span><span></span></div>`}</div>`;
 }
 // 只顯示最大牌: no simulation and no advice, just your hand and the biggest cards the others could have
 function renderTops() {
@@ -540,7 +551,8 @@ function readingText(r) {
 let lastUnread = "", lastOdd = "", lastShots = 0;
 let noPlayTurn = false;
 function showNoPlay() {
-  bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>`;
+  bodyHTML = `<p class="who">遊戲顯示：您沒有更大的牌可出</p><div class="play"><p class="verb pass">PASS</p></div><p class="note">沒有壓得過的牌，按「PASS」</p>` +
+    (live.S.round ? `<div class="row" aria-label="你的手牌">${sortIds(live.S.my).map((x) => pc(x, "")).join("")}</div>` + topsHTML(live.S) : "");
   hasAdvice = true; shownTurn = null; old = false; setState("輪到你", "turn"); paint();
 }
 // ---------- a play shown large read as more or fewer cards than its owner put down ----------
@@ -590,7 +602,7 @@ function onReading(res, from) {
       // your turn on screen: the advice shown must be for this turn (your hand as read now), else it is being worked out
       const h = res.hand && res.hand.cards;
       if (live.S.round && h && h.length === live.S.my.length) setState("輪到你", "turn");
-      else { setState("輪到你，讀牌中…", "turn"); if (hasAdvice) { bodyHTML = '<p class="verb wait"><span class="spin"></span>讀牌中…</p>'; hasAdvice = false; shownTurn = null; old = false; paint(); } }
+      else { setState("輪到你，讀牌中…", "turn"); if (hasAdvice && aim !== "tops") { bodyHTML = '<p class="verb wait"><span class="spin"></span>讀牌中…</p>'; hasAdvice = false; shownTurn = null; old = false; paint(); } }
     }
     else if (!res.myTurn && st.status !== "settling") { setState("等對手…"); if (hasAdvice && !old) { old = true; paint(); } }
     return st;
