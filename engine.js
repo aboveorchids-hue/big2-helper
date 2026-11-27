@@ -500,7 +500,7 @@
     return { next, below: (n) => Math.floor(next() * n / 4294967296) };
   }
 
-  const P_SIMPLE = 0, P_SMART = 1, P_S = 4, P_PIMC = 5;
+  const P_SIMPLE = 0, P_SMART = 1, P_S = 4, P_PIMC = 5, P_NEST = 6;
   const sizeOf = (c) => (c.type === T_SINGLE ? 1 : c.type === T_PAIR ? 2 : c.type === T_DRAGON ? 13 : c.type === T_PASS ? 0 : 5);
   function choose(g, p, pol) {
     const L = genLegal(g, p);
@@ -510,6 +510,16 @@
     if (L.length === 1 && g.last.type === T_PASS) return L[0];
     if (pol.type === P_S) return chooseS(g, p, L, pol.w);
     if (pol.type === P_PIMC) return choosePIMC(g, p, L, pol).card;
+    // P_NEST: your own later plays in a simulated game, each worked out by a small simulation of its own (pol.nest:
+    // deals, cand) for the first pol.left of them, by the weighted player after that
+    if (pol.type === P_NEST) {
+      if (pol.left > 0) {
+        pol.left--;
+        const N = pol.nest;
+        return choosePIMC(g, p, L, { type: P_PIMC, nDet: N.deals, maxCand: N.cand, rollType: P_S, w: pol.w, seed: pol.rnd.next(), ev: pol.ev }).card;
+      }
+      return chooseS(g, p, L, pol.w);
+    }
     return chooseSmart(g, p, L);
   }
   function playOut(g, pols) { for (let k = 0; k < 400 && g.winner < 0; k++) applyMove(g, choose(g, g.cur, pols[g.cur])); }
@@ -519,9 +529,9 @@
   function choosePIMC1(g, p, L, pol) {
     let C = candidates(g, p, L);
     if (g.last.type !== T_PASS && !pol.noPass) C.push(PASS());
-    const rp = { type: pol.rollType, w: pol.w };
+    const rp = pol.nest ? { type: P_NEST, w: pol.w, nest: pol.nest, left: 0, ev: pol.ev !== false } : { type: pol.rollType, w: pol.w };
     if (C.length === 1) return { card: C[0], stats: [{ card: C[0], wins: 0, n: 0 }], pref: C[0] };
-    const pref = choose(g, p, rp);
+    const pref = choose(g, p, pol.nest ? { type: P_S, w: pol.w } : rp);
     if (pol.maxCand > 0 && C.length > pol.maxCand) {
       const H = g.hand[p];
       const sc = C.map((c, i) => {
@@ -548,6 +558,7 @@
     const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0), n = new Array(C.length).fill(0), alive = C.map(() => true);
     const pols = [0, 1, 2, 3].map((q) => (q === p ? rp : { type: P_SMART }));
     const rnd = rng32(pol.seed >>> 0);
+    if (pol.nest) rp.rnd = rnd;
     const unseen = toIds(U);
     // pol.adapt { z, min, max, batch, budget }: deals in batches; from `min` deals on, a play falls out once it is behind
     // the leader by more than z standard errors of the difference on the same deals; stop when one is left, at `max`
@@ -580,6 +591,7 @@
         if (!alive[i]) continue;
         const x = copyGame(base);
         applyMove(x, C[i]);
+        if (pol.nest) rp.left = pol.nest.depth || 1;
         playOut(x, pols);
         const w = x.winner === p ? 1 : 0, s = pointsFor(x, p);
         wins[i] += w; pts[i] += s;

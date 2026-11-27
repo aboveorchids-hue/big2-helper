@@ -427,7 +427,7 @@
         if (Lsim.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lsim[0], g, keep: true };
       }
       const pw = opts.passW == null ? null : opts.passW;
-      const r0 = B.choosePIMC(g, 0, Lsim, { passW: pw, passMode: opts.passMode || 1, passes: pw == null ? null : passesOf(S), type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
+      const r0 = B.choosePIMC(g, 0, Lsim, { nest: opts.nest ? { depth: opts.nest, deals: 12, cand: 4 } : null, passW: pw, passMode: opts.passMode || 1, passes: pw == null ? null : passesOf(S), type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
       // (神幣優先: a play that splits something up only when nothing that keeps the hand whole is within 2 points of it)
       const close = opts.close == null ? 2 : opts.close;
       const pick = wantKeep ? B.preferKeep(g.hand[0], r0.stats, r0.card, close) : r0.card;

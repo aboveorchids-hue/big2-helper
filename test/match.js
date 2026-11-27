@@ -90,6 +90,8 @@ function heroMove(g, h, seed, info) {
   if (h.name === "rule") return B.ruleChoice(g, p, L).card;
   const adapt = h.fixed ? null : { z: h.z || 2.5, min: h.min || 200, max: h.deals || 1500, batch: 100, budget: 1e9 };
   const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
+  // nest=D (ndeals=N, ncand=K): in each simulated game your next D plays each by a simulation of N deals over K plays
+  if (h.nest) pol.nest = { depth: h.nest, deals: h.ndeals || 12, cand: h.ncand || 4 };
   // passw=X (passmode=1|2): the others' passes this hand make deals that could have beaten the play X times as likely
   if (h.passw != null) { pol.passW = h.passw; pol.passMode = h.passmode || 1; pol.passes = g.log.filter((e) => e.p !== p && e.m.type === B.T_PASS && e.last.type !== B.T_PASS).map((e) => ({ q: e.p, last: e.last })); }
   if (h.name === "pimc") {

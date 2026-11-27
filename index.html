@@ -133,6 +133,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
         <legend>出牌建議</legend>
         <div class="nums"></div>
         <p class="note">時間到了也會先算完「至少幾局」，之後每次檢查時才看時間。</p>
+        <p class="note">「之後幾手也模擬」：模擬每一局時，你接下來的這幾手不照固定打法出，而是各自再做一次小模擬（4 種出法各 12 局）挑最好的。0 是不套；每多一手大約慢好幾倍，時間上限一到就停，局數會變少。</p>
         <p class="note">「最多比幾種出法」：出法比這個多時，先挑出完剩下手數最少的幾種來模擬（另外一定會比 PASS 和一種留著獨大牌的出法）。越多越不會漏掉好出法，但越慢。</p>
         <p class="note">「贏一局另加幾分」只在建議依據選「兼顧」時用：每種出法比「平均分數＋先出完的機率×這個分數」。越大越看重勝率，0 就和神幣優先一樣。換牌建議在「兼顧」時照神幣優先算。</p>
         <p class="note err" role="alert"></p>
@@ -162,16 +163,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b31"></script>
-<script src="read.js?v=b31"></script>
-<script src="engine.js?v=b31"></script>
-<script src="state.js?v=b31"></script>
-<script src="live.js?v=b31"></script>
-<script src="swap.js?v=b31"></script>
+<script src="models.js?v=b32"></script>
+<script src="read.js?v=b32"></script>
+<script src="engine.js?v=b32"></script>
+<script src="state.js?v=b32"></script>
+<script src="live.js?v=b32"></script>
+<script src="swap.js?v=b32"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b31";
+const VERSION = "b32";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -329,7 +330,7 @@ function adviseSoon() {
     if (live.recKey() !== key) return;
     const a0 = performance.now();
     try {
-      const r = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, loose: aim === "loose", keep: aim === "pts", adapt: SIM.play, maxCand: SIM.play.cand, passW: PASS_W, passMode: 2 });
+      const r = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, loose: aim === "loose", keep: aim === "pts", adapt: SIM.play, maxCand: SIM.play.cand, nest: SIM.play.nest, passW: PASS_W, passMode: 2 });
       if (!r) return;
       renderAdvice(r); shownTurn = live.turnKey(); beep(r.card.type === B.T_PASS);
       log(`建議 ${r.card.type === B.T_PASS ? "PASS" : comboText(idsOf(r.card))}（${aimName()}，${r.kind}${r.stats && r.stats[0] ? ` ${fmtPts(r.stats[0].pts)} 分 ${pct(r.stats[0])}，模擬 ${r.stats[0].n} 局` : ""}${r.risky ? "，不確定壓得過" : ""}）${r.stats && r.stats.length > 1 ? "｜其他 " + r.stats.slice(1, 3).map((x) => `${x.card.type === B.T_PASS ? "PASS" : comboText(idsOf(x.card))} ${fmtPts(x.pts)} ${pct(x)}`).join("、") : ""}｜${Math.round(performance.now() - a0)}ms`);
@@ -358,7 +359,7 @@ const BONUS_DEF = 20;
 // against smart)
 const PASS_W = 0.3;
 const SIM_DEF = {
-  play: { z: 2.5, min: 200, max: 1500, batch: 100, budget: 2000, cand: 8, bonus: BONUS_DEF },
+  play: { z: 2.5, min: 200, max: 1500, batch: 100, budget: 2000, cand: 8, nest: 1, bonus: BONUS_DEF },
   swap: { z: 2.5, min: 200, max: 3000, batch: 100, budget: 3000 },
 };
 // lo..hi keep the page from locking up for long (the simulation runs on the page's own thread)
@@ -369,6 +370,7 @@ const SIM_FIELDS = [
   { k: "batch", name: "每幾局檢查一次", lo: 1, hi: 5000, step: 10, int: true },
   { k: "budget", name: "時間上限（毫秒）", lo: 100, hi: 20000, step: 100, int: true },
   { k: "cand", name: "最多比幾種出法", lo: 2, hi: 40, step: 1, int: true, only: "play" },
+  { k: "nest", name: "之後幾手也模擬", lo: 0, hi: 3, step: 1, int: true, only: "play" },
   { k: "bonus", name: "贏一局另加幾分", lo: 0, hi: 500, step: 1, int: false, only: "play" },
 ];
 const fieldsOf = (g) => SIM_FIELDS.filter((f) => !f.only || f.only === g);
@@ -398,7 +400,7 @@ try {
   }
 } catch (e) {}
 const isDefault = (g) => fieldsOf(g).every((f) => SIM[g][f.k] === SIM_DEF[g][f.k]);
-const simText = (g) => { const v = SIM[g]; return `淘汰門檻 ${v.z}、至少 ${v.min} 局、最多 ${v.max} 局、每 ${v.batch} 局檢查、${v.budget} 毫秒${g === "play" ? `、最多比 ${v.cand} 種出法、兼顧時贏一局另加 ${v.bonus} 分` : ""}${isDefault(g) ? "（預設）" : ""}`; };
+const simText = (g) => { const v = SIM[g]; return `淘汰門檻 ${v.z}、至少 ${v.min} 局、最多 ${v.max} 局、每 ${v.batch} 局檢查、${v.budget} 毫秒${g === "play" ? `、最多比 ${v.cand} 種出法、之後 ${v.nest} 手也模擬、兼顧時贏一局另加 ${v.bonus} 分` : ""}${isDefault(g) ? "（預設）" : ""}`; };
 function paintSim(g) {
   const box = $(SIM_BOX[g]);
   for (const f of fieldsOf(g)) { const el = box.querySelector(`input[data-k="${f.k}"]`); el.value = SIM[g][f.k]; el.removeAttribute("aria-invalid"); }
