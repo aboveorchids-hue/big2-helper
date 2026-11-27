@@ -120,7 +120,7 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </div>
     <p class="note support" id="support"></p>
     <div class="set">
-      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（不拆組合，2 不限，有人剩 8 張以下才拆，差 2 分內不拆）</option><option value="win">勝率優先（先出完的機率最高）</option><option value="mix">兼顧（分數差不多時選勝率高的）</option><option value="loose">散牌優先（沒牌權時出散牌，危險時先出 2）</option><option value="tops">只顯示別家可能有的最大牌（不給建議）</option></select></label>
+      <label>建議依據 <select id="aimIn"><option value="pts">神幣優先（平均每局分數最多；差 2 分內選不拆組合的）</option><option value="win">勝率優先（先出完的機率最高）</option><option value="mix">兼顧（分數差不多時選勝率高的）</option><option value="loose">散牌優先（沒牌權時出散牌，危險時先出 2）</option><option value="tops">只顯示別家可能有的最大牌（不給建議）</option></select></label>
       <label><input id="swapIn" type="checkbox"> 換牌局（每局開始先換 0～3 張）</label>
       <label><input id="soundIn" type="checkbox" checked> 有建議時發出提示音</label>
       <label>也可以選截圖 <input id="fileIn" type="file" accept="image/*"></label>
@@ -164,17 +164,17 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b35"></script>
-<script src="read.js?v=b35"></script>
-<script src="engine.js?v=b35"></script>
-<script src="state.js?v=b35"></script>
-<script src="live.js?v=b35"></script>
-<script src="swap.js?v=b35"></script>
-<script src="pool.js?v=b35"></script>
+<script src="models.js?v=b36"></script>
+<script src="read.js?v=b36"></script>
+<script src="engine.js?v=b36"></script>
+<script src="state.js?v=b36"></script>
+<script src="live.js?v=b36"></script>
+<script src="swap.js?v=b36"></script>
+<script src="pool.js?v=b36"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b35";
+const VERSION = "b36";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -349,7 +349,7 @@ function adviseSoon() {
     };
     let out;
     try {
-      out = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, loose: aim === "loose", keep: aim === "pts", adapt: SIM.play, maxCand: SIM.play.cand, nest: SIM.play.nest, passW: PASS_W, passMode: 2, pool });
+      out = live.advise({ W: B2_MODELS.W, ev: aim !== "win", winBonus: aim === "mix" ? SIM.play.bonus : 0, loose: aim === "loose", whole: aim === "pts", adapt: SIM.play, maxCand: SIM.play.cand, nest: SIM.play.nest, passW: PASS_W, passMode: 2, pool });
     } catch (e) { fail(e); return; }
     Promise.resolve(out).then((r) => {
       if (!r || live.recKey() !== key) return;
