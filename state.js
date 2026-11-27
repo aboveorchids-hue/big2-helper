@@ -315,6 +315,9 @@
       let mineLast = null; for (let i = S.events.length - 1; i >= 0; i--) if (S.events[i].k === "play") { mineLast = S.events[i].c; break; }
       if (!mineLast || !mineLast.includes(o.pile.card)) LV = null;
     }
+    // a single surely on the table that the newest play seen is not (its owner's count hidden when it went down, say a
+    // seat leading again after everyone passed on its play): that play is over; the owner is worked out below
+    if (LV && LV.owner != null && o.pile.n === 1 && o.pile.card != null && o.pile.sure && !hand.includes(o.pile.card) && (LV.n !== 1 || (LV.c && !LV.c.includes(o.pile.card)))) LV = null;
     let owner = null;
     if (o.myTurn) {
       if (LV && LV.owner != null) owner = LV.owner;
