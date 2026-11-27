@@ -115,7 +115,51 @@
     return { best: res[0], list: res, none: res.find((x) => !x.gave.length), ms: Date.now() - t0 };
   }
 
-  const api = { advise, autoSwap, choices, afterSwap, sampleTable };
+  // the same advice in two parts, for running the games on several threads (pool.js): the short list of choices from
+  // the quick rating (and the random state after it, so the tables then come from where the one-thread run takes them)
+  function shortList(myIds, opts) {
+    opts = opts || {};
+    const my = myIds.slice().sort((a, b) => a - b);
+    if (my.length !== 13) return null;
+    const H = B.fromIds(my), unseen = B.toIds(B.unseenOf(H, B.empty()));
+    const rnd = B.rng32(opts.seed != null ? opts.seed : hashIds(my));
+    const nQuick = opts.nQuick || 32, keep = opts.keep || 16;
+    const QT = []; for (let i = 0; i < nQuick; i++) QT.push(sampleTable(unseen, rnd));
+    const all = choices(my, 3).map((gave) => {
+      let v = 0;
+      for (const T of QT) v += quick(afterSwap(H, gave, T)[0]);
+      return { gave, v: v / nQuick };
+    });
+    all.sort((a, b) => b.v - a.v);
+    const short = all.slice(0, keep);
+    for (const m of [[], autoSwap(H)]) if (!short.some((x) => x.gave.join() === m.join())) short.push(all.find((x) => x.gave.join() === m.join()));
+    return { my, gaves: short.map((x) => x.gave), seed: rnd.next() };
+  }
+  // `count` tables from seed, each choice of gaves still in (alive) played out on every one: per choice the results
+  // table by table (vals: points, or with aim "win" whether you went out first), wins and points in all
+  function runTables(my, gaves, alive, seed, count, opts) {
+    return B.withSplitCache(() => {
+      const H = B.fromIds(my), unseen = B.toIds(B.unseenOf(H, B.empty())), rnd = B.rng32(seed >>> 0), win = opts.aim === "win";
+      const pol = [{ type: B.P_S, w: opts.W }, { type: B.P_SMART }, { type: B.P_SMART }, { type: B.P_SMART }];
+      if (!pol[0].w) pol[0] = { type: B.P_SMART };
+      const vals = gaves.map(() => []), wins = gaves.map(() => 0), pts = gaves.map(() => 0);
+      for (let d = 0; d < count; d++) {
+        const T = sampleTable(unseen, rnd);
+        gaves.forEach((gave, i) => {
+          if (!alive[i]) return;
+          const hands = afterSwap(H, gave, T);
+          let cur = 0; for (let q = 0; q < 4; q++) if (B.has(hands[q], 0)) cur = q;
+          const g = B.newGame(hands, cur);
+          B.playOut(g, pol);
+          const sc = B.pointsFor(g, 0), w = g.winner === 0 ? 1 : 0;
+          pts[i] += sc; wins[i] += w; vals[i].push(win ? w : sc);
+        });
+      }
+      return { vals, wins, pts };
+    });
+  }
+
+  const api = { advise, autoSwap, choices, afterSwap, sampleTable, shortList, runTables };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.B2Swap = api;
 })(typeof self !== "undefined" ? self : this);
