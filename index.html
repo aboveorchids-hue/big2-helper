@@ -163,16 +163,16 @@ textarea { width: 100%; min-height: 140px; margin-top: 10px; font-family: var(--
     </details>
   </section>
 </main>
-<script src="models.js?v=b32"></script>
-<script src="read.js?v=b32"></script>
-<script src="engine.js?v=b32"></script>
-<script src="state.js?v=b32"></script>
-<script src="live.js?v=b32"></script>
-<script src="swap.js?v=b32"></script>
+<script src="models.js?v=b33"></script>
+<script src="read.js?v=b33"></script>
+<script src="engine.js?v=b33"></script>
+<script src="state.js?v=b33"></script>
+<script src="live.js?v=b33"></script>
+<script src="swap.js?v=b33"></script>
 <script>
 "use strict";
 (function () {
-const VERSION = "b32";
+const VERSION = "b33";
 const B = window.Big2, ST = window.B2State;
 const $ = (id) => document.getElementById(id);
 const t0 = performance.now(), lines = [];
@@ -370,7 +370,7 @@ const SIM_FIELDS = [
   { k: "batch", name: "每幾局檢查一次", lo: 1, hi: 5000, step: 10, int: true },
   { k: "budget", name: "時間上限（毫秒）", lo: 100, hi: 20000, step: 100, int: true },
   { k: "cand", name: "最多比幾種出法", lo: 2, hi: 40, step: 1, int: true, only: "play" },
-  { k: "nest", name: "之後幾手也模擬", lo: 0, hi: 3, step: 1, int: true, only: "play" },
+  { k: "nest", name: "之後幾手也模擬", lo: 0, hi: 6, step: 1, int: true, only: "play" },
   { k: "bonus", name: "贏一局另加幾分", lo: 0, hi: 500, step: 1, int: false, only: "play" },
 ];
 const fieldsOf = (g) => SIM_FIELDS.filter((f) => !f.only || f.only === g);
