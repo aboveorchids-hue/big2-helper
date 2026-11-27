@@ -521,6 +521,11 @@
       let hasPass = false;
       for (let i = 0; i < pol.maxCand; i++) { K.push(C[sc[i][1]]); if (C[sc[i][1]].type === T_PASS) hasPass = true; }
       if (g.last.type !== T_PASS && !hasPass) K.push(PASS());
+      // and the best of the rest by the same order that keeps your 獨大 cards: a play nobody could beat is not it, nor
+      // one that takes a card from a piece of the split nobody could beat
+      const U0 = unseenOf(H, g.played), boss = splitPieces(H, splitHand(H)).filter((x) => !beatableBy(x, U0));
+      const keepsBoss = (c) => c.type !== T_PASS && beatableBy(c, U0) && !boss.some((x) => x.set.some((m, r) => m & c.set[r]));
+      if (!K.some(keepsBoss)) for (let i = pol.maxCand; i < sc.length; i++) if (keepsBoss(C[sc[i][1]])) { K.push(C[sc[i][1]]); break; }
       C = K;
     }
     const U = unseenOf(g.hand[p], g.played);
