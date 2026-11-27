@@ -427,7 +427,14 @@
         if (Lsim.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lsim[0], g, keep: true };
       }
       const pw = opts.passW == null ? null : opts.passW;
-      const r0 = B.choosePIMC(g, 0, Lsim, { nest: opts.nest ? { depth: opts.nest, deals: 12, cand: 4 } : null, passW: pw, passMode: opts.passMode || 1, passes: pw == null ? null : passesOf(S), type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
+      const pol = { nest: opts.nest ? { depth: opts.nest, deals: 12, cand: 4 } : null, passW: pw, passMode: opts.passMode || 1, passes: pw == null ? null : passesOf(S), type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) };
+      // opts.pool (pool.js): the simulation on other threads; the advice then comes as a promise (null if cancelled)
+      if (opts.pool) {
+        const su = B.pimcSetup(g, 0, Lsim, pol);
+        if (!su.single) return opts.pool.run(g, 0, su.C, su.pref, pol).then((r0) => (r0 ? finish(r0) : null));
+      }
+      return finish(B.choosePIMC(g, 0, Lsim, pol));
+      function finish(r0) {
       // (神幣優先: a play that splits something up only when nothing that keeps the hand whole is within 2 points of it)
       const close = opts.close == null ? 2 : opts.close;
       const pick = wantKeep ? B.preferKeep(g.hand[0], r0.stats, r0.card, close) : r0.card;
@@ -435,7 +442,8 @@
       // the play chosen first, then the others by the aim (each over the deals it was played on)
       const val = (x) => (ev ? x.pts + winBonus * x.wins / x.n : x.wins / x.n);
       const stats = r.stats.filter((x) => x.n > 0).sort((a, b) => (a.card === r.card ? -1 : b.card === r.card ? 1 : val(b) - val(a)));
-      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, freed: opts.freed || 0, kept: kept ? close : 0, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals };
+      return { kind: stats.length > 1 ? "sim" : "only", card: r.card, stats, g, byLit, ev, winBonus, loose: lz ? { danger: lz.danger } : null, keep: !!opts.keep, freed: opts.freed || 0, kept: kept ? close : 0, risky: risky && r.card.type !== B.T_PASS, ms: r.ms, deals: r.deals, threads: r.threads || 1 };
+      }
     }
 
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }

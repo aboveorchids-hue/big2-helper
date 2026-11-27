@@ -526,11 +526,13 @@
 
   // Monte Carlo over the unseen cards: for each candidate, how often do I go out first?
   function choosePIMC(g, p, L, pol) { return withSplitCache(() => choosePIMC1(g, p, L, pol)); }
-  function choosePIMC1(g, p, L, pol) {
+  // the plays to compare (pol.maxCand of them at most: those leaving the fewest plays, PASS and one keeping your 獨大
+  // cards) and the weighted player's own pick; single: nothing to compare
+  function pimcSetup(g, p, L, pol) {
     let C = candidates(g, p, L);
     if (g.last.type !== T_PASS && !pol.noPass) C.push(PASS());
     const rp = pol.nest ? { type: P_NEST, w: pol.w, nest: pol.nest, left: 0, ev: pol.ev !== false } : { type: pol.rollType, w: pol.w };
-    if (C.length === 1) return { card: C[0], stats: [{ card: C[0], wins: 0, n: 0 }], pref: C[0] };
+    if (C.length === 1) return { C, pref: C[0], single: true };
     const pref = choose(g, p, pol.nest ? { type: P_S, w: pol.w } : rp);
     if (pol.maxCand > 0 && C.length > pol.maxCand) {
       const H = g.hand[p];
@@ -553,28 +555,19 @@
       if (!K.some(keepsBoss)) for (let i = pol.maxCand; i < sc.length; i++) if (keepsBoss(C[sc[i][1]])) { K.push(C[sc[i][1]]); break; }
       C = K;
     }
-    const U = unseenOf(g.hand[p], g.played);
-    const cnt = g.hand.map(count);
-    const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0), n = new Array(C.length).fill(0), alive = C.map(() => true);
+    return { C, pref };
+  }
+  // one deal at a time for plays C from position g (p to play): the unseen cards dealt at random (with pol.passes, see
+  // below), each play still in (alive) played out on it; out[i] = { w, s } (went out first, points) or null
+  function pimcDealer(g, p, C, pol, rnd) {
+    const rp = pol.nest ? { type: P_NEST, w: pol.w, nest: pol.nest, left: 0, ev: pol.ev !== false, rnd } : { type: pol.rollType, w: pol.w };
     const pols = [0, 1, 2, 3].map((q) => (q === p ? rp : { type: P_SMART }));
-    const rnd = rng32(pol.seed >>> 0);
-    if (pol.nest) rp.rnd = rnd;
-    const unseen = toIds(U);
-    // pol.adapt { z, min, max, batch, budget }: deals in batches; from `min` deals on, a play falls out once it is behind
-    // the leader by more than z standard errors of the difference on the same deals; stop when one is left, at `max`
-    // deals, or after `budget` ms. Else exactly pol.nDet deals for every play.
-    const A = pol.adapt, nMax = A ? A.max : pol.nDet;
-    const V = A ? C.map(() => new Float32Array(nMax)) : null;
-    // the aim: going out first (pol.ev false), or the points (pol.ev), with pol.winBonus more points counted for going
-    // out first (兼顧: when the points are close, the play that goes out first more often)
-    const X = pol.ev ? pol.winBonus || 0 : 0;
-    const mean = (i) => (pol.ev ? pts[i] + X * wins[i] : wins[i]) / Math.max(1, n[i]);
-    const t0 = Date.now();
+    const unseen = toIds(unseenOf(g.hand[p], g.played)), cnt = g.hand.map(count);
     // pol.passes [{ q, last }]: the others' passes so far, each on the play it did not beat; a deal giving q a hand that
     // could have beaten it (pol.passMode 2: without splitting anything up) counts pol.passW times as likely (dealt
     // again, up to 30 times, unless kept by that chance)
     const PS = pol.passes && pol.passes.length && pol.passW != null && pol.passW < 1 ? pol.passes : null;
-    for (let d = 0; d < nMax; d++) {
+    return (alive) => {
       let base;
       for (let tries = 0; tries < 30; tries++) {
         const deck = unseen.slice();
@@ -587,13 +580,55 @@
         for (const x of PS) if (cnt[x.q] && couldBeat(base.hand[x.q], x.last, pol.passMode)) w *= pol.passW;
         if (w >= 1 || rnd.next() / 4294967296 < w) break;
       }
+      const out = new Array(C.length).fill(null);
       for (let i = 0; i < C.length; i++) {
         if (!alive[i]) continue;
         const x = copyGame(base);
         applyMove(x, C[i]);
         if (pol.nest) rp.left = pol.nest.depth || 1;
         playOut(x, pols);
-        const w = x.winner === p ? 1 : 0, s = pointsFor(x, p);
+        out[i] = { w: x.winner === p ? 1 : 0, s: pointsFor(x, p) };
+      }
+      return out;
+    };
+  }
+  // `count` deals for plays C (those with alive[i]), from seed: for each play its results deal by deal (vals: the points,
+  // or with pol.ev false whether it went out first; + pol.winBonus per win), wins and points in all (several of these
+  // run side by side on other threads, see pool.js)
+  function pimcRun(g, p, C, pol, seed, count, alive) {
+    return withSplitCache(() => {
+      const deal = pimcDealer(g, p, C, pol, rng32(seed >>> 0)), X = pol.ev ? pol.winBonus || 0 : 0;
+      const vals = C.map(() => []), wins = C.map(() => 0), pts = C.map(() => 0);
+      for (let d = 0; d < count; d++) {
+        const out = deal(alive);
+        for (let i = 0; i < C.length; i++) if (out[i]) { wins[i] += out[i].w; pts[i] += out[i].s; vals[i].push(pol.ev ? out[i].s + X * out[i].w : out[i].w); }
+      }
+      return { vals, wins, pts };
+    });
+  }
+  function choosePIMC1(g, p, L, pol) {
+    const su = pimcSetup(g, p, L, pol);
+    let C = su.C;
+    const pref = su.pref;
+    if (su.single) return { card: C[0], stats: [{ card: C[0], wins: 0, n: 0 }], pref: C[0] };
+    const wins = new Array(C.length).fill(0), pts = new Array(C.length).fill(0), n = new Array(C.length).fill(0), alive = C.map(() => true);
+    const rnd = rng32(pol.seed >>> 0);
+    const deal = pimcDealer(g, p, C, pol, rnd);
+    // pol.adapt { z, min, max, batch, budget }: deals in batches; from `min` deals on, a play falls out once it is behind
+    // the leader by more than z standard errors of the difference on the same deals; stop when one is left, at `max`
+    // deals, or after `budget` ms. Else exactly pol.nDet deals for every play.
+    const A = pol.adapt, nMax = A ? A.max : pol.nDet;
+    const V = A ? C.map(() => new Float32Array(nMax)) : null;
+    // the aim: going out first (pol.ev false), or the points (pol.ev), with pol.winBonus more points counted for going
+    // out first (兼顧: when the points are close, the play that goes out first more often)
+    const X = pol.ev ? pol.winBonus || 0 : 0;
+    const mean = (i) => (pol.ev ? pts[i] + X * wins[i] : wins[i]) / Math.max(1, n[i]);
+    const t0 = Date.now();
+    for (let d = 0; d < nMax; d++) {
+      const out = deal(alive);
+      for (let i = 0; i < C.length; i++) {
+        if (!out[i]) continue;
+        const w = out[i].w, s = out[i].s;
         wins[i] += w; pts[i] += s;
         if (V) V[i][n[i]] = pol.ev ? s + X * w : w;
         n[i]++;
@@ -699,7 +734,7 @@
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, keepPlays, anyLow, preferKeep, couldBeat, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, pimcSetup, pimcRun, looseChoice, ruleChoice, keepPlays, anyLow, preferKeep, couldBeat, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;
