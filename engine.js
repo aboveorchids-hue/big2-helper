@@ -361,6 +361,21 @@
   const minOpp = (g, p) => { let m = 99; for (let q = 0; q < 4; q++) if (q !== p) m = Math.min(m, count(g.hand[q])); return m; };
   const sameCombo = (a, b) => a.type === b.type && sameSet(a.set, b.set);
 
+  // could hand h beat play `last` with one of the same kind (mode 2: without the rest of h taking more plays)
+  function couldBeat(h, last, mode) {
+    if (mode !== 2) return beatableBy(last, h);
+    const L = [], lt = last.type;
+    if (lt === T_SINGLE) genSingles(h, L); else if (lt === T_PAIR) genPairs(h, L);
+    else if (lt === T_STRAIGHT) genStraights(h, L, true, false); else if (lt === T_FULL) genFulls(h, L);
+    else return false;
+    let steps = -1;
+    for (const c of L) {
+      if (!beats(c, last)) continue;
+      if (steps < 0) steps = splitHand(h).steps;
+      if (1 + splitHand(minus(h, c.set)).steps <= steps) return true;
+    }
+    return false;
+  }
   function chooseSmart(g, p, L) {
     const H = g.hand[p];
     const lead = g.last.type === T_PASS;
@@ -544,12 +559,23 @@
     const X = pol.ev ? pol.winBonus || 0 : 0;
     const mean = (i) => (pol.ev ? pts[i] + X * wins[i] : wins[i]) / Math.max(1, n[i]);
     const t0 = Date.now();
+    // pol.passes [{ q, last }]: the others' passes so far, each on the play it did not beat; a deal giving q a hand that
+    // could have beaten it (pol.passMode 2: without splitting anything up) counts pol.passW times as likely (dealt
+    // again, up to 30 times, unless kept by that chance)
+    const PS = pol.passes && pol.passes.length && pol.passW != null && pol.passW < 1 ? pol.passes : null;
     for (let d = 0; d < nMax; d++) {
-      const deck = unseen.slice();
-      for (let i = deck.length - 1; i > 0; i--) { const j = rnd.below(i + 1); const t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
-      const base = copyGame(g);
-      let k = 0;
-      for (let q = 0; q < 4; q++) if (q !== p) { const h = empty(); for (let i = 0; i < cnt[q]; i++) { const c = deck[k++]; h[c >> 2] |= 1 << (c & 3); } base.hand[q] = h; }
+      let base;
+      for (let tries = 0; tries < 30; tries++) {
+        const deck = unseen.slice();
+        for (let i = deck.length - 1; i > 0; i--) { const j = rnd.below(i + 1); const t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+        base = copyGame(g);
+        let k = 0;
+        for (let q = 0; q < 4; q++) if (q !== p) { const h = empty(); for (let i = 0; i < cnt[q]; i++) { const c = deck[k++]; h[c >> 2] |= 1 << (c & 3); } base.hand[q] = h; }
+        if (!PS) break;
+        let w = 1;
+        for (const x of PS) if (cnt[x.q] && couldBeat(base.hand[x.q], x.last, pol.passMode)) w *= pol.passW;
+        if (w >= 1 || rnd.next() / 4294967296 < w) break;
+      }
       for (let i = 0; i < C.length; i++) {
         if (!alive[i]) continue;
         const x = copyGame(base);
@@ -661,7 +687,7 @@
   const api = { T_PASS, T_SINGLE, T_PAIR, T_STRAIGHT, T_FULL, T_QUADS, T_SF, T_DRAGON, TNAME, RANKS, SUITS, name, WINR, WINTOP,
     empty, fromIds, toIds, count, lowest, highest, minus, isEmpty, sameSet, has, unseenOf, beats, PASS, isBomb,
     genLegal, applyMove, newGame, copyGame, nextActor, dingDa, loserPoints, winnerMult, pointsFor, splitHand, splitPieces, beatableBy,
-    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, keepPlays, anyLow, preferKeep, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
+    chooseSmart, chooseS, choosePIMC, looseChoice, ruleChoice, keepPlays, anyLow, preferKeep, couldBeat, choose, playOut, candidates, featuresOf, FNAMES, rng32, P_SMART, P_S, P_PIMC, sameCombo, staticStrength,
     genSingles, genPairs, genStraights, genFulls, genQuads, genDragon, splitCounts, cmpSet, withSplitCache };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Big2 = api;

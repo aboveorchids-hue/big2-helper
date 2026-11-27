@@ -90,6 +90,8 @@ function heroMove(g, h, seed, info) {
   if (h.name === "rule") return B.ruleChoice(g, p, L).card;
   const adapt = h.fixed ? null : { z: h.z || 2.5, min: h.min || 200, max: h.deals || 1500, batch: 100, budget: 1e9 };
   const pol = { type: B.P_PIMC, nDet: h.deals || 200, adapt, maxCand: h.cand || 8, rollType: B.P_S, w: M.W, seed, ev: (h.aim || "pts") === "pts", winBonus: h.bonus || 0 };
+  // passw=X (passmode=1|2): the others' passes this hand make deals that could have beaten the play X times as likely
+  if (h.passw != null) { pol.passW = h.passw; pol.passMode = h.passmode || 1; pol.passes = g.log.filter((e) => e.p !== p && e.m.type === B.T_PASS && e.last.type !== B.T_PASS).map((e) => ({ q: e.p, last: e.last })); }
   if (h.name === "pimc") {
     // loose=1: 散牌優先 (B.looseChoice narrows the plays, the simulation picks among them)
     if (h.loose) { const lz = B.looseChoice(g, p, L, { danger: h.loose !== 2 }); if (lz.L.length) { if (lz.L.length === 1 && lz.noPass) return lz.L[0]; const r = B.choosePIMC(g, p, lz.L, Object.assign({}, pol, { noPass: lz.noPass })); info.deals += r.deals || 0; info.dec++; return r.card; } if (g.last.type !== B.T_PASS) return B.PASS(); }

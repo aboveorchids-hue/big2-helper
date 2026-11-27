@@ -379,6 +379,25 @@
       const Af = litOnly(A);
       return Af.length ? { L: Af, byLit: Af.length < A.length } : { L: A, byLit: false };
     }
+    // the others' passes this hand, each on the play it did not beat (the last play with known cards before the pass sign,
+    // by someone else; none when that play's cards were not read)
+    function passesOf(S) {
+      const out = [];
+      for (let i = 0; i < S.events.length; i++) {
+        const e = S.events[i];
+        if (e.k !== "pass") continue;
+        for (let j = i - 1; j >= 0; j--) {
+          const f = S.events[j];
+          if (f.k === "turn" && f.lead) break;
+          if (f.k !== "play" && f.k !== "count") continue;
+          if (f.s === e.s) break;
+          const c = f.c && f.c.length ? ST.classify(f.c) : null;
+          if (c) out.push({ q: e.s, last: c });
+          break;
+        }
+      }
+      return out;
+    }
     function advise(opts) {
       opts = opts || {};
       const S = L.S, R = S.round, g = ST.position(S);
@@ -407,7 +426,8 @@
         if (!Lsim.length) return { kind: "keep", card: B.PASS(), g };
         if (Lsim.length === 1 && g.last.type === B.T_PASS) return { kind: "forced", card: Lsim[0], g, keep: true };
       }
-      const r0 = B.choosePIMC(g, 0, Lsim, { type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
+      const pw = opts.passW == null ? null : opts.passW;
+      const r0 = B.choosePIMC(g, 0, Lsim, { passW: pw, passMode: opts.passMode || 1, passes: pw == null ? null : passesOf(S), type: B.P_PIMC, nDet: opts.nDet || 200, adapt: opts.adapt || null, maxCand: opts.maxCand || 8, rollType: B.P_S, w: W, seed: posSeed(), ev, winBonus, noPass: !!(lz && lz.noPass && lz.L.length) });
       // (神幣優先: a play that splits something up only when nothing that keeps the hand whole is within 2 points of it)
       const close = opts.close == null ? 2 : opts.close;
       const pick = wantKeep ? B.preferKeep(g.hand[0], r0.stats, r0.card, close) : r0.card;
@@ -421,7 +441,7 @@
     function reset() { L.S = ST.blank(); L.ring = []; L.lastO = null; L.waitCount = 0; L.seen = []; L.shows = []; L.disp = [null, null, null, null]; L.busySince = 0; L.odd = null; }
     function restore(S) { if (S && S.v === 2) { L.S = S; L.lastO = null; L.ring = []; } }
     const setSwapMode = (on) => { L.swapMode = !!on; };
-    return { process, advise, reset, restore, recKey, turnKey, setSwapMode, swapInfo, setSwapAdvice, startSwap, get S() { return L.S; } };
+    return { process, advise, passesOf, reset, restore, recKey, turnKey, setSwapMode, swapInfo, setSwapAdvice, startSwap, get S() { return L.S; } };
   }
 
   const api = { create, agree, news };
